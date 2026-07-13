@@ -105,10 +105,19 @@ artifact is retrievable straight from the scent (§1.7). `compile_ms` (the
 wall-clock the compile took) attaches as cost, so a cheap-to-build robust
 path can be preferred over an expensive one when both are viable — the input
 Yemọja's spawn decisions eventually weigh (§#4)."""
+# cost provenance: OSOVM meters compile wall-clock (ms) only — no dollars, no
+# tokens — so a cost-efficiency comparison against a LOOM signal is auditable to
+# what each actually measured rather than trusted as a like-for-like number.
+_compile_cost(compile_ms::Real) = compile_ms > 0 ?
+    Dict("wall_clock_ms" => compile_ms,
+         "source" => Dict("producer" => "osovm",
+                          "method" => "compile-wall-clock",
+                          "units" => "ms")) : nothing
+
 compile_emitted!(uri::String, key::String; compile_ms::Real=0) =
     ingest!(uri; outcome="success", subtype="emitted", intensity=3,
             note="bytecode cached", meta=Dict("cache_key" => key),
-            cost=(compile_ms > 0 ? Dict("wall_clock_ms" => compile_ms) : nothing))
+            cost=_compile_cost(compile_ms))
 
 # ---- bytecode cache keyed to signal URIs (§1.4, §1.7) ------------------------
 
