@@ -69,16 +69,20 @@ function ensure_watch()
 end
 
 """Push one state transition through the watch. Returns the deposited signal
-(or nothing when the field is unreachable)."""
+(or nothing when the field is unreachable). `cost` (a Dict with any of
+`wall_clock_ms`/`dollars`/`tokens`) attaches the compute price of the
+transition so cost-aware routing can prefer cheap-to-verify paths (§#4)."""
 function ingest!(resource::String; outcome::String="", kind::String="",
                  subtype::String="", intensity::Real=0, note::String="",
-                 meta::Dict=Dict())
+                 meta::Dict=Dict(), cost::Union{Dict,Nothing}=nothing)
     id = ensure_watch()
     id === nothing && return nothing
-    _post("/v1/ingest/$(id)", Dict(
+    ev = Dict(
         "resource" => resource, "outcome" => outcome, "kind" => kind,
         "subtype" => subtype, "intensity" => intensity, "note" => note,
-        "meta" => meta))
+        "meta" => meta)
+    cost === nothing || (ev["cost"] = cost)
+    _post("/v1/ingest/$(id)", ev)
 end
 
 # ---- Techgnosis stage-transition signaling (§1.5, §1.6) ----------------------
@@ -97,10 +101,14 @@ compile_failed!(uri::String, stage::String, err) =
             note=first(string(err), 300))
 
 """Successful emit: gold on the unit, meta carrying the cache key so the
-artifact is retrievable straight from the scent (§1.7)."""
-compile_emitted!(uri::String, key::String) =
+artifact is retrievable straight from the scent (§1.7). `compile_ms` (the
+wall-clock the compile took) attaches as cost, so a cheap-to-build robust
+path can be preferred over an expensive one when both are viable — the input
+Yemọja's spawn decisions eventually weigh (§#4)."""
+compile_emitted!(uri::String, key::String; compile_ms::Real=0) =
     ingest!(uri; outcome="success", subtype="emitted", intensity=3,
-            note="bytecode cached", meta=Dict("cache_key" => key))
+            note="bytecode cached", meta=Dict("cache_key" => key),
+            cost=(compile_ms > 0 ? Dict("wall_clock_ms" => compile_ms) : nothing))
 
 # ---- bytecode cache keyed to signal URIs (§1.4, §1.7) ------------------------
 
@@ -110,10 +118,10 @@ cache_key(source::String) = bytes2hex(sha256(source))
 
 """Store compiled IR in Waggle's durable memory under the cache key and mark
 gold on its URI: the field becomes a content-addressed build cache."""
-function cache_put!(source::String, ir)
+function cache_put!(source::String, ir; compile_ms::Real=0)
     key = cache_key(source)
     _request("PUT", WAGGLE[] * "/v1/memory/osovm/bytecode/$(key)"; body=ir)
-    compile_emitted!("osovm://bytecode/$(key)", key)
+    compile_emitted!("osovm://bytecode/$(key)", key; compile_ms=compile_ms)
     return key
 end
 
@@ -137,13 +145,15 @@ function compile_with_signals(compile_fn::Function, source::String, uri::String)
     cached !== nothing && return (cached, :cache_hit)
     current = "parsing"
     stage!(uri, current)
+    t0 = time()
     try
         # the pipeline is one call; failures self-report their stage in the
         # error when possible, else the last stage we entered is blamed
         ir = compile_fn(source)
         current = "codegen"
         stage!(uri, current)
-        key = cache_put!(source, ir)
+        # wall-clock of the whole compile becomes the emitted signal's cost
+        key = cache_put!(source, ir; compile_ms=(time() - t0) * 1000)
         stage!(uri, "emitted")
         return (ir, :compiled)
     catch err
