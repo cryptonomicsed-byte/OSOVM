@@ -6,6 +6,8 @@ Evaluates veil execution quality via F1 scores and mints Àṣẹ rewards.
 
 module VeilSimScorer
 
+using Dates
+
 include("veils_777.jl")
 include("veil_index.jl")
 

@@ -251,7 +251,7 @@ end
 
 function step_simulation(
     sim::SimulationState,
-    inputs::Dict{String, Any} = Dict()
+    inputs::Dict{String, Any} = Dict{String, Any}()
 )::Tuple{SimulationState, SimulationMetrics}
 
     start_time = time()

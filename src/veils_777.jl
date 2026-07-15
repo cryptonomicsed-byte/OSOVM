@@ -32,9 +32,9 @@ struct VeilDefinition
     references::Vector{String}        # Papers/links
     sacred_mapping::Union{String, Nothing}  # Sacred geometry link
     
-    function VeilDefinition(id, name, tier, description, equation, category, 
+    function VeilDefinition(id, name, tier, description, equation, category,
                            opcode, ffi_language, parameters, output_type,
-                           implementation_file, tags, references; sacred_mapping=nothing)
+                           implementation_file="", tags=String[], references=String[]; sacred_mapping=nothing)
         new(id, name, tier, description, equation, category, opcode, ffi_language,
             parameters, output_type, implementation_file, tags, references, sacred_mapping)
     end
