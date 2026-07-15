@@ -32,3 +32,4 @@ ffi/**/*.dylib
 ffi/**/*.dll
 ffi/rust/target/
 ffi/go/*.a
+move_contracts/build/
