@@ -848,7 +848,11 @@ function compute_metrics(sim::SimulationState)::SimulationMetrics
     sim.metrics.f1_score = f1
     sim.metrics.convergence_rate = convergence_sum / max(length(sim.entities), 1)
     sim.metrics.total_energy = total_energy
-    sim.metrics.energy_drift = abs(total_energy - sim.initial_energy) / max(abs(sim.initial_energy), 1e-10)
+    # Relative energy drift against a MEANINGFUL scale: the larger of the initial
+    # energy, current energy, or a 1.0 floor. Using a 1e-10 floor made drift explode
+    # to ~1e11 whenever the net initial energy was ~0 (e.g. KE/PE cancel, or velocity
+    # set after init) — a metric artifact, not a real blowup. This is bounded + sane.
+    sim.metrics.energy_drift = abs(total_energy - sim.initial_energy) / max(abs(sim.initial_energy), abs(total_energy), 1.0)
 
     # Energy efficiency: ratio of useful work to total energy expended
     sim.metrics.energy_efficiency = total_energy > 0 ? sim.metrics.convergence_rate / (1.0 + abs(total_energy)) : 1.0
@@ -889,8 +893,17 @@ function batch_simulation(
     f1_avg = mean([m.f1_score for m in metrics_history])
     sim.metrics.f1_score = f1_avg
 
-    status = f1_avg >= 0.9 ? "CONVERGED" : (f1_avg >= 0.5 ? "PARTIAL" : "DIVERGED")
-    println("[VeilSim] Batch complete | F1=$(round(f1_avg, digits=4)) | Status=$status | E_drift=$(round(sim.metrics.energy_drift, digits=6))")
+    # Task quality (F1) — measures task SUCCESS, not physical validity. A bare sim
+    # with no scored task has F1=0 and reads DIVERGED here — that is expected and does
+    # NOT mean the physics diverged (see Stability, which is the real health signal).
+    task_status = f1_avg >= 0.9 ? "CONVERGED" : (f1_avg >= 0.5 ? "PARTIAL" : "DIVERGED")
+    # Physical stability — SEPARATE from F1: finite + bounded state + energy drift in tolerance.
+    finite_ok = all(isfinite(e.position.x) && isfinite(e.position.y) && isfinite(e.position.z) &&
+                    isfinite(e.velocity.x) && isfinite(e.velocity.y) && isfinite(e.velocity.z)
+                    for e in sim.entities)
+    bounded_ok = all(vec3_mag(e.velocity) < 1e6 for e in sim.entities)
+    stability = (finite_ok && bounded_ok && sim.metrics.energy_drift < 10.0) ? "STABLE" : "UNSTABLE"
+    println("[VeilSim] Batch complete | Task=$task_status (F1=$(round(f1_avg, digits=4))) | Stability=$stability | E_drift=$(round(sim.metrics.energy_drift, digits=6))")
 
     return sim, metrics_history
 end
