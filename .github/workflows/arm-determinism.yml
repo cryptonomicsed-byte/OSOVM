@@ -1,0 +1,43 @@
+name: arm-determinism
+
+# Cross-architecture determinism gate (the PoSim gate).
+# The canonical x86_64 hash is locked (3/3 identical runs, AMD EPYC, Julia 1.11.5).
+# This job runs the SAME determinism test on real ARM64 hardware (GitHub's free
+# ubuntu-24.04-arm runner) and asserts the SHA-256 of the final sim state is
+# bit-identical to x86. Match => cross-arch determinism proven, gate closed.
+
+on:
+  push:
+    paths:
+      - 'src/veilsim_engine.jl'
+      - 'test/determinism_real.jl'
+      - '.github/workflows/arm-determinism.yml'
+  workflow_dispatch:
+
+jobs:
+  arm-determinism:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Julia 1.11.5 (aarch64)
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11.5'
+          arch: aarch64
+
+      - name: Run determinism test on ARM64 and compare to canonical x86 hash
+        run: |
+          set -euo pipefail
+          CANON=782a7b2a708554c6516a693be987c6bc2cb1e506bbb8971c9e17163d25c8b097
+          HASH=$(julia test/determinism_real.jl | grep '^DETERMINISM_HASH=' | cut -d= -f2)
+          echo "arch:      $(uname -m)"
+          echo "canonical: $CANON  (x86_64)"
+          echo "arm64:     $HASH"
+          if [ "$HASH" = "$CANON" ]; then
+            echo "✅ cross-arch determinism PROVEN — x86_64 == arm64. PoSim gate CLOSED."
+          else
+            echo "❌ MISMATCH — arm64 diverges from x86_64."
+            echo "   Next: audit @fastmath/muladd/fma in veilsim_engine.jl, force openlibm, pin reduction order."
+            exit 1
+          fi
