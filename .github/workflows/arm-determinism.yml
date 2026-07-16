@@ -12,6 +12,7 @@ on:
       - 'src/veilsim_engine.jl'
       - 'test/determinism_real.jl'
       - 'test/determinism_mujoco.py'
+      - 'test/determinism_mujoco_contacts.py'
       - '.github/workflows/arm-determinism.yml'
   workflow_dispatch:
 
@@ -77,5 +78,43 @@ jobs:
           else
             echo "❌ MISMATCH — arm64 diverges from x86_64."
             echo "   Next: check mujoco version drift, compiler flags, contact solver settings."
+            exit 1
+          fi
+
+  arm-determinism-mujoco-contacts:
+    # The real MuJoCo risk case: a box tumbles and settles through actual
+    # contact resolution (iterative solver over active constraints), not
+    # the contact-free pendulum above. Solver iteration order is exactly
+    # the kind of thing that can legitimately differ across platforms
+    # without being a bug anywhere -- this job is the actual determinism
+    # bar for anything that touches the ground. Canonical hash confirmed
+    # 2026-07-16 on macOS x86_64 + Linux x86_64, mujoco==3.3.7 pinned.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned MuJoCo
+        run: pip install mujoco==3.3.7 numpy
+
+      - name: Run MuJoCo contacts determinism test on ARM64 and compare to canonical x86 hash
+        run: |
+          set -euo pipefail
+          CANON=e423652c04d84ddf4f2bad98052d7f7526735fc59c626e2e4132d452744768a1
+          HASH=$(python3 test/determinism_mujoco_contacts.py | grep '^DETERMINISM_HASH=' | cut -d= -f2)
+          echo "arch:      $(uname -m)"
+          echo "canonical: $CANON  (x86_64)"
+          echo "arm64:     $HASH"
+          if [ "$HASH" = "$CANON" ]; then
+            echo "✅ MuJoCo CONTACT-RESOLUTION cross-arch determinism PROVEN — x86_64 == arm64."
+          else
+            echo "❌ MISMATCH — arm64 diverges from x86_64 on contact resolution."
+            echo "   This is the real, expected-hard case -- a mismatch here is informative,"
+            echo "   not a broken pipeline. Next: pin solver iteration count/tolerance"
+            echo "   explicitly in the XML (do not rely on defaults), check for SIMD-width-"
+            echo "   dependent reduction order in the contact solver."
             exit 1
           fi
