@@ -26,11 +26,14 @@ jobs:
           version: '1.11.5'
           arch: aarch64
 
+      - name: Instantiate project deps
+        run: julia --project=@. -e 'using Pkg; Pkg.instantiate()'
+
       - name: Run determinism test on ARM64 and compare to canonical x86 hash
         run: |
           set -euo pipefail
           CANON=782a7b2a708554c6516a693be987c6bc2cb1e506bbb8971c9e17163d25c8b097
-          HASH=$(julia test/determinism_real.jl | grep '^DETERMINISM_HASH=' | cut -d= -f2)
+          HASH=$(julia --project=@. test/determinism_real.jl | grep '^DETERMINISM_HASH=' | cut -d= -f2)
           echo "arch:      $(uname -m)"
           echo "canonical: $CANON  (x86_64)"
           echo "arm64:     $HASH"
