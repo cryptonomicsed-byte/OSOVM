@@ -65,4 +65,4 @@ if __name__ == "__main__":
     print(f"checkpoints: {len(checkpoints)}")
     print(f"checkpoint[0] qpos (expect ~0.7853981634, pi/4): {checkpoints[0]['qpos']}")
     print(f"final qpos: {checkpoints[-1]['qpos']}")
-    print(f"HASH: {h}")
+    print(f"DETERMINISM_HASH={h}")

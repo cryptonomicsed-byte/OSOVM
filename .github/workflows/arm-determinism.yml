@@ -11,11 +11,12 @@ on:
     paths:
       - 'src/veilsim_engine.jl'
       - 'test/determinism_real.jl'
+      - 'test/determinism_mujoco.py'
       - '.github/workflows/arm-determinism.yml'
   workflow_dispatch:
 
 jobs:
-  arm-determinism:
+  arm-determinism-julia:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -42,5 +43,39 @@ jobs:
           else
             echo "❌ MISMATCH — arm64 diverges from x86_64."
             echo "   Next: audit @fastmath/muladd/fma in veilsim_engine.jl, force openlibm, pin reduction order."
+            exit 1
+          fi
+
+  arm-determinism-mujoco:
+    # MuJoCo cross-arch check. Canonical x86 hash confirmed 2026-07-16 on both
+    # macOS x86_64 (Python 3.9.6) and Linux x86_64 (Python 3.12.3), mujoco==3.3.7
+    # pinned on both. Version MUST stay pinned -- unpinned installs resolve to
+    # whatever is latest, which is not guaranteed to reproduce this hash even on
+    # matching hardware (verified this the hard way: default pip install pulled
+    # 3.10.0 on the VPS while the Mac had 3.3.7).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned MuJoCo
+        run: pip install mujoco==3.3.7 numpy
+
+      - name: Run MuJoCo determinism test on ARM64 and compare to canonical x86 hash
+        run: |
+          set -euo pipefail
+          CANON=5d731393877eaa77ab054ee43f6cd2edaf99ac29c17eda004737abf2968b20f6
+          HASH=$(python3 test/determinism_mujoco.py | grep '^DETERMINISM_HASH=' | cut -d= -f2)
+          echo "arch:      $(uname -m)"
+          echo "canonical: $CANON  (x86_64)"
+          echo "arm64:     $HASH"
+          if [ "$HASH" = "$CANON" ]; then
+            echo "✅ MuJoCo cross-arch determinism PROVEN — x86_64 == arm64."
+          else
+            echo "❌ MISMATCH — arm64 diverges from x86_64."
+            echo "   Next: check mujoco version drift, compiler flags, contact solver settings."
             exit 1
           fi
