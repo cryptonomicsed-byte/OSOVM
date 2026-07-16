@@ -11,7 +11,7 @@ async fn test_consensus_node_creation() {
         Validator::new("council_3".to_string(), [3u8; 32]),
     ];
 
-    let node = OsoConsensusNode::new("council_1".to_string(), validators, 2);
+    let node = OsoConsensusNode::new("council_1".to_string(), validators, 3);
     assert!(node.is_ok());
 }
 
@@ -112,7 +112,7 @@ fn test_bft_consensus_rounds() {
         Validator::new("council_3".to_string(), [3u8; 32]),
     ];
 
-    let validator_set = ValidatorSet::new(validators, 2).unwrap();
+    let validator_set = ValidatorSet::new(validators, 3).unwrap();
     let consensus = BFTConsensus::new("council_1".to_string(), validator_set);
 
     assert_eq!(consensus.current_round(), 0);

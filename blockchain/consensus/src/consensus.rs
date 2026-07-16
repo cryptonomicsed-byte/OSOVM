@@ -171,9 +171,7 @@ impl BFTConsensus {
 
             // Increment sender nonce
             let sender = tx.sender();
-            if let Some(account) = state.get_or_create_account(sender) {
-                account.nonce += 1;
-            }
+            state.get_or_create_account(sender).nonce += 1;
         }
 
         // Commit block to state
@@ -283,7 +281,7 @@ mod tests {
             Validator::new("node_2".to_string(), [2u8; 32]),
             Validator::new("node_3".to_string(), [3u8; 32]),
         ];
-        let validator_set = ValidatorSet::new(validators, 2).unwrap();
+        let validator_set = ValidatorSet::new(validators, 3).unwrap();
         let consensus = BFTConsensus::new("node_1".to_string(), validator_set);
 
         assert_eq!(consensus.current_round(), 0);
@@ -297,7 +295,7 @@ mod tests {
             Validator::new("node_2".to_string(), [2u8; 32]),
             Validator::new("node_3".to_string(), [3u8; 32]),
         ];
-        let validator_set = ValidatorSet::new(validators, 2).unwrap();
+        let validator_set = ValidatorSet::new(validators, 3).unwrap();
         let consensus = BFTConsensus::new("node_1".to_string(), validator_set);
 
         assert_eq!(consensus.current_round(), 0);
@@ -320,7 +318,7 @@ mod tests {
             Validator::new("node_1".to_string(), [1u8; 32]),
             Validator::new("node_2".to_string(), [2u8; 32]),
         ];
-        let validator_set = ValidatorSet::new(validators, 2).unwrap();
+        let validator_set = ValidatorSet::new(validators, 3).unwrap();
         let consensus = BFTConsensus::new("node_1".to_string(), validator_set);
 
         let mut state = State::new();

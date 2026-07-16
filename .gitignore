@@ -33,3 +33,4 @@ ffi/**/*.dll
 ffi/rust/target/
 ffi/go/*.a
 move_contracts/build/
+blockchain/consensus/target/

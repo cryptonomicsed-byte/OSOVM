@@ -95,8 +95,8 @@ mod tests {
     #[tokio::test]
     async fn test_node_creation() {
         let validators = vec![
-            Validator::new("validator_1".to_string(), vec![0u8; 32]),
-            Validator::new("validator_2".to_string(), vec![1u8; 32]),
+            Validator::new("validator_1".to_string(), [0u8; 32]),
+            Validator::new("validator_2".to_string(), [1u8; 32]),
         ];
 
         let node = OsoConsensusNode::new("node_1".to_string(), validators, 2);

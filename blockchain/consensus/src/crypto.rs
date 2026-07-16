@@ -2,8 +2,8 @@
 // Ed25519 signatures, SHA-256 hashing
 
 use crate::error::{ConsensusError, Result};
-use crate::{Block, Validator, ValidatorSet};
-use ed25519_dalek::{PublicKey, Signature, SignatureError, Verifier};
+use crate::{Block, ValidatorSet};
+use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct Ed25519Verifier {
     /// Cache of validator pubkeys (address → pubkey)
-    pubkey_cache: HashMap<String, PublicKey>,
+    pubkey_cache: HashMap<String, VerifyingKey>,
 }
 
 impl Ed25519Verifier {
@@ -27,7 +27,10 @@ impl Ed25519Verifier {
             return Err(ConsensusError::InvalidPublicKey);
         }
 
-        let pubkey = PublicKey::from_bytes(pubkey_bytes)
+        let pubkey_arr: [u8; 32] = pubkey_bytes
+            .try_into()
+            .map_err(|_| ConsensusError::InvalidPublicKey)?;
+        let pubkey = VerifyingKey::from_bytes(&pubkey_arr)
             .map_err(|_| ConsensusError::InvalidPublicKey)?;
 
         self.pubkey_cache.insert(address, pubkey);
@@ -46,8 +49,10 @@ impl Ed25519Verifier {
             .get(address)
             .ok_or_else(|| ConsensusError::InvalidValidator(address.to_string()))?;
 
-        let sig = Signature::from_bytes(signature_bytes)
+        let sig_arr: [u8; 64] = signature_bytes
+            .try_into()
             .map_err(|_| ConsensusError::InvalidSignature("malformed signature".to_string()))?;
+        let sig = Signature::from_bytes(&sig_arr);
 
         pubkey
             .verify(message, &sig)
@@ -113,7 +118,7 @@ impl Ed25519Verifier {
     pub fn hash_transactions(transactions: &[crate::block::Transaction]) -> [u8; 32] {
         let hashes: Vec<Vec<u8>> = transactions.iter().map(Self::hash_transaction).collect();
 
-        let mut root = Self::hash_pair(&hashes.first().map(|h| h.as_slice()).unwrap_or(&[]));
+        let mut root = Self::hash_pair(hashes.first().map(|h| h.as_slice()).unwrap_or(&[]), &[]);
 
         for hash in hashes.iter().skip(1) {
             root = Self::hash_pair(&root, hash.as_slice());
@@ -125,7 +130,7 @@ impl Ed25519Verifier {
     }
 
     /// Hash a pair of items (merkle tree node)
-    fn hash_pair(left: &[u8], right: &[u8] = &[]) -> Vec<u8> {
+    fn hash_pair(left: &[u8], right: &[u8]) -> Vec<u8> {
         let mut hasher = Sha256::new();
         hasher.update(left);
         hasher.update(right);
@@ -138,13 +143,13 @@ impl Ed25519Verifier {
         message: &[u8],
         private_key_bytes: &[u8],
     ) -> Result<[u8; 64]> {
-        use ed25519_dalek::SigningKey;
+        use ed25519_dalek::{Signer, SigningKey};
         
         let signing_key = SigningKey::from_bytes(&<[u8; 32]>::try_from(private_key_bytes)
             .map_err(|_| ConsensusError::InvalidPublicKey)?);
         let signature = signing_key.sign(message);
         
-        Ok(*signature.as_bytes())
+        Ok(signature.to_bytes())
     }
 }
 

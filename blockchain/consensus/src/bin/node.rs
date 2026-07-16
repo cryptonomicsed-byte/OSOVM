@@ -48,7 +48,7 @@ async fn main() -> io::Result<()> {
         (0..num_validators)
             .map(|i| {
                 let mut pubkey = [0u8; 32];
-                pubkey[0] = (i as u8) % 256;
+                pubkey[0] = i as u8; // `as` already truncates/wraps into 0..=255
                 Validator::new(format!("validator_{}", i), pubkey)
             })
             .collect()
