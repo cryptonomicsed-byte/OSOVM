@@ -1,0 +1,5 @@
+*.bak
+*.bak.*
+Manifest.toml
+.julia/
+julia-1.10.5/

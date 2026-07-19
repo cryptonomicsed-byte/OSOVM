@@ -1,0 +1,53 @@
+@visualOS(
+    name: "VeilOS",
+    version: "v7.7",
+    renderer: "Ọ̀ṢỌ́VM-GPU"
+) {
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // LEFT PANEL: VEIL LIBRARY (777 cards)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @veilLibrary {
+        @search(filter: "category", sort: "novelty");
+        
+        @card(veilId: uint16) {
+            @display: {name, category, F1_threshold, cost};
+            @drag: enabled;
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // CENTER: 3D SIMULATION CANVAS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @simulationCanvas {
+        @canvas 3D: ThreeJS-WASM;
+        @physics: Julia + Cannon.jl;
+        @dragDrop: VeilLibrary → Canvas;
+        @nodeEditor: n8n-style;
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // RIGHT PANEL: METRICS DASHBOARD
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @metricsDashboard {
+        @metrics: Realtime F1/MSE;
+        @physics: Julia + Cannon-WASM;
+        @witnessPanel: 7/12 live;
+        @mintButton: "Àṣẹ" on success;
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // BOTTOM: CONTROL PANEL
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @controlPanel {
+        @templates: [PID_Drone, RL_Walker, SLAM_Rover];
+        @play: "Run Sim" (costs 7 Ase);
+        @pause: "Pause";
+        @reset: "Clear Canvas";
+    }
+
+}

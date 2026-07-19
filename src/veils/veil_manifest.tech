@@ -1,0 +1,751 @@
+// veil_manifest.tech — THE 777 VEILS REGISTRY
+// Crown Architect: Bínò ÈL Guà Ọmọ Kọ́dà Àṣẹ
+// Master Auditor: Ọbàtálá
+// Genesis: November 11, 2025
+// Version: 1.0.0 — Complete Technical + Sacred-Scientific Synthesis
+
+@veilManifest(
+    totalVeils: 777,
+    categories: 13,
+    foundation: "Control Systems → Physics → Consciousness",
+    language: "Julia + .tech DSL",
+    anchor: "Multi-chain (Bitcoin, Ethereum, Arweave, Sui)"
+) {
+
+    // ═══════════════════════════════════════════════════════════
+    // SECTION 1: CONTROL SYSTEMS (1-25)
+    // ═══════════════════════════════════════════════════════════
+    
+    @category("control", range: "1-25", emoji: "🎛️") {
+        @veil(id: 1, name: "PID Controller") {
+            equation: "u(t) = Kp·e + Ki∫e + Kd·de/dt";
+            parameters: ["Kp", "Ki", "Kd", "setpoint"];
+            tags: ["control", "feedback", "stability"];
+            implementation: "pid_controller.jl";
+        }
+        
+        @veil(id: 2, name: "Kalman Filter") {
+            equation: "x̂_k = x̂_{k-1} + K_k(z_k - H·x̂_{k-1})";
+            parameters: ["Q", "R", "H", "F"];
+            tags: ["estimation", "sensor_fusion", "recursive"];
+            implementation: "kalman_filter.jl";
+        }
+        
+        @veil(id: 3, name: "LQR Control") {
+            equation: "u = -Kx, K = R^{-1}B^T P";
+            parameters: ["A", "B", "Q", "R"];
+            tags: ["optimal", "linear", "quadratic"];
+            implementation: "lqr_controller.jl";
+        }
+        
+        @veil(id: 4, name: "State Space") {
+            equation: "ẋ = Ax + Bu, y = Cx + Du";
+            parameters: ["A", "B", "C", "D"];
+            tags: ["linear", "system", "representation"];
+            implementation: "state_space.jl";
+        }
+        
+        @veil(id: 5, name: "Transfer Function") {
+            equation: "G(s) = Y(s)/U(s)";
+            parameters: ["numerator", "denominator"];
+            tags: ["frequency_domain", "poles", "zeros"];
+            implementation: "transfer_function.jl";
+        }
+        
+        @veil(id: 6, name: "Pole Placement") {
+            equation: "det(sI - A + BK) = desired polynomial";
+            parameters: ["A", "B", "desired_poles"];
+            tags: ["feedback", "eigenvalue", "placement"];
+            implementation: "pole_placement.jl";
+        }
+        
+        @veil(id: 7, name: "Observer Design") {
+            equation: "L = P_c^T R^{-1}";
+            parameters: ["A", "C", "poles"];
+            tags: ["estimation", "state_reconstruction"];
+            implementation: "observer_design.jl";
+        }
+        
+        @veil(id: 8, name: "Model Predictive Control") {
+            equation: "min J = Σ(||x||^2_Q + ||u||^2_R)";
+            parameters: ["A", "B", "Q", "R", "horizon"];
+            tags: ["predictive", "optimization", "constrained"];
+            implementation: "mpc.jl";
+        }
+        
+        @veil(id: 9, name: "Sliding Mode Control") {
+            equation: "s = c·x̃ + ẋ̃, u = -K·sign(s)";
+            parameters: ["c", "K", "lambda"];
+            tags: ["robust", "nonlinear", "discontinuous"];
+            implementation: "sliding_mode.jl";
+        }
+        
+        @veil(id: 10, name: "Adaptive Control") {
+            equation: "θ̇ = -Γ e^T φ";
+            parameters: ["Gamma", "reference_model"];
+            tags: ["adaptive", "learning", "parameter_estimation"];
+            implementation: "adaptive_control.jl";
+        }
+        
+        @veil(id: 11, name: "H∞ Control") {
+            equation: "||T||_∞ < γ";
+            parameters: ["gamma", "weights"];
+            tags: ["robust", "frequency_weighted"];
+            implementation: "hinf_control.jl";
+        }
+        
+        @veil(id: 12, name: "Robust Control") {
+            equation: "μ-synthesis";
+            parameters: ["uncertainty_bounds"];
+            tags: ["robustness", "perturbation"];
+            implementation: "robust_control.jl";
+        }
+        
+        @veil(id: 13, name: "Discrete PID") {
+            equation: "u_k = u_{k-1} + Kp(e_k - e_{k-1}) + Ki·e_k + Kd(e_k - 2e_{k-1} + e_{k-2})";
+            parameters: ["Kp", "Ki", "Kd", "Ts"];
+            tags: ["digital", "control", "sampling"];
+            implementation: "discrete_pid.jl";
+        }
+        
+        @veil(id: 14, name: "Deadbeat Control") {
+            equation: "y_m = r in minimum steps";
+            parameters: ["system_order"];
+            tags: ["digital", "finite_settling_time"];
+            implementation: "deadbeat_control.jl";
+        }
+        
+        @veil(id: 15, name: "Smith Predictor") {
+            equation: "G_c(s) = G_p(s)/(1 + G_p(s)·G_m(s)·(1 - e^{-T_d·s}))";
+            parameters: ["delay", "model"];
+            tags: ["time_delay", "compensation"];
+            implementation: "smith_predictor.jl";
+        }
+        
+        @veil(id: 16, name: "Internal Model Control") {
+            equation: "Q(s) = G_p^{-1}(s)·F(s)";
+            parameters: ["Gp", "Gm"];
+            tags: ["inversion", "feedforward"];
+            implementation: "imc.jl";
+        }
+        
+        @veil(id: 17, name: "Fuzzy Logic Control") {
+            equation: "μ(x) membership functions";
+            parameters: ["fuzzy_rules", "membership_params"];
+            tags: ["fuzzy", "nonlinear", "heuristic"];
+            implementation: "fuzzy_control.jl";
+        }
+        
+        @veil(id: 18, name: "Neural Network Control") {
+            equation: "u = NN(x, W)";
+            parameters: ["network_weights"];
+            tags: ["learning", "approximation"];
+            implementation: "nn_control.jl";
+        }
+        
+        @veil(id: 19, name: "Gain Scheduling") {
+            equation: "K(ρ) parameter-dependent gains";
+            parameters: ["scheduling_variable"];
+            tags: ["nonlinear", "parameter_varying"];
+            implementation: "gain_scheduling.jl";
+        }
+        
+        @veil(id: 20, name: "Anti-windup") {
+            equation: "Conditional integration";
+            parameters: ["integral_limit"];
+            tags: ["saturation", "windup_prevention"];
+            implementation: "antiwindup.jl";
+        }
+        
+        @veil(id: 21, name: "Feedforward Control") {
+            equation: "u_ff = G_ff^{-1}(r)";
+            parameters: ["feedforward_model"];
+            tags: ["disturbance_rejection"];
+            implementation: "feedforward.jl";
+        }
+        
+        @veil(id: 22, name: "Cascade Control") {
+            equation: "Inner/outer loop structure";
+            parameters: ["inner_controller", "outer_controller"];
+            tags: ["hierarchical", "nested_loops"];
+            implementation: "cascade_control.jl";
+        }
+        
+        @veil(id: 23, name: "Ratio Control") {
+            equation: "u = K(r_1/r_2)";
+            parameters: ["K"];
+            tags: ["process_control", "ratio"];
+            implementation: "ratio_control.jl";
+        }
+        
+        @veil(id: 24, name: "Override Control") {
+            equation: "u = min/max(u_1, u_2)";
+            parameters: ["override_logic"];
+            tags: ["selection", "safety"];
+            implementation: "override_control.jl";
+        }
+        
+        @veil(id: 25, name: "Split Range Control") {
+            equation: "Multiple actuators";
+            parameters: ["split_ranges"];
+            tags: ["multi_actuator", "coordinated"];
+            implementation: "split_range.jl";
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════
+    // SECTION 2: MACHINE LEARNING & AI (26-75)
+    // ═══════════════════════════════════════════════════════════
+    
+    @category("ml", range: "26-75", emoji: "🧠") {
+        @veil(id: 26, name: "Gradient Descent") {
+            equation: "θ = θ - α∇J(θ)";
+            parameters: ["alpha", "max_iterations"];
+            tags: ["optimization", "learning", "basic"];
+            implementation: "gradient_descent.jl";
+        }
+        
+        @veil(id: 27, name: "Backpropagation") {
+            equation: "δ^l = ((W^{l+1})^T δ^{l+1}) ⊙ σ'(z^l)";
+            parameters: ["learning_rate", "layers"];
+            tags: ["neural_net", "training", "chain_rule"];
+            implementation: "backprop.jl";
+        }
+        
+        @veil(id: 28, name: "Adam Optimizer") {
+            equation: "m_t = β₁m_{t-1} + (1-β₁)g_t";
+            parameters: ["beta1", "beta2", "alpha", "epsilon"];
+            tags: ["adaptive", "momentum", "second_moment"];
+            implementation: "adam.jl";
+        }
+        
+        @veil(id: 29, name: "RMSProp") {
+            equation: "v_t = β₂v_{t-1} + (1-β₂)g_t²";
+            parameters: ["beta2", "alpha"];
+            tags: ["adaptive", "root_mean_square"];
+            implementation: "rmsprop.jl";
+        }
+        
+        @veil(id: 30, name: "Cross-Entropy Loss") {
+            equation: "L = -Σ y_i log(ŷ_i)";
+            parameters: ["num_classes"];
+            tags: ["classification", "loss", "information"];
+            implementation: "cross_entropy.jl";
+        }
+        
+        @veil(id: 31, name: "Mean Squared Error") {
+            equation: "MSE = (1/n)Σ(y_i - ŷ_i)²";
+            parameters: [];
+            tags: ["regression", "loss", "quadratic"];
+            implementation: "mse.jl";
+        }
+        
+        @veil(id: 32, name: "Softmax") {
+            equation: "σ(z_i) = e^{z_i}/Σe^{z_j}";
+            parameters: ["temperature"];
+            tags: ["activation", "probability"];
+            implementation: "softmax.jl";
+        }
+        
+        @veil(id: 33, name: "ReLU") {
+            equation: "f(x) = max(0, x)";
+            parameters: [];
+            tags: ["activation", "piecewise", "sparse"];
+            implementation: "relu.jl";
+        }
+        
+        @veil(id: 34, name: "Sigmoid") {
+            equation: "σ(x) = 1/(1 + e^{-x})";
+            parameters: [];
+            tags: ["activation", "logistic"];
+            implementation: "sigmoid.jl";
+        }
+        
+        @veil(id: 35, name: "Tanh") {
+            equation: "tanh(x) = (e^x - e^{-x})/(e^x + e^{-x})";
+            parameters: [];
+            tags: ["activation", "hyperbolic"];
+            implementation: "tanh.jl";
+        }
+        
+        @veil(id: 36, name: "Dropout") {
+            equation: "y_i = r_i · x_i, r_i ~ Bernoulli(p)";
+            parameters: ["dropout_rate"];
+            tags: ["regularization", "stochastic"];
+            implementation: "dropout.jl";
+        }
+        
+        @veil(id: 37, name: "Batch Normalization") {
+            equation: "ŷ = γ((x - μ)/σ) + β";
+            parameters: ["momentum", "epsilon"];
+            tags: ["normalization", "training"];
+            implementation: "batch_norm.jl";
+        }
+        
+        @veil(id: 38, name: "LSTM Gate") {
+            equation: "f_t = σ(W_f[h_{t-1}, x_t] + b_f)";
+            parameters: ["hidden_size"];
+            tags: ["rnn", "memory", "gate"];
+            implementation: "lstm.jl";
+        }
+        
+        @veil(id: 39, name: "GRU") {
+            equation: "z_t = σ(W_z[h_{t-1}, x_t])";
+            parameters: ["hidden_size"];
+            tags: ["rnn", "gated", "recurrent"];
+            implementation: "gru.jl";
+        }
+        
+        @veil(id: 40, name: "Attention Mechanism") {
+            equation: "Attention(Q,K,V) = softmax(QK^T/√d_k)V";
+            parameters: ["d_k", "dropout"];
+            tags: ["transformer", "alignment"];
+            implementation: "attention.jl";
+        }
+        
+        @veil(id: 41, name: "Transformer") {
+            equation: "MultiHead(Q,K,V) = Concat(head_1,...)W^O";
+            parameters: ["num_heads", "d_model"];
+            tags: ["architecture", "self_attention"];
+            implementation: "transformer.jl";
+        }
+        
+        @veil(id: 42, name: "ResNet") {
+            equation: "F(x) = H(x) - x";
+            parameters: ["depth"];
+            tags: ["residual", "skip_connection"];
+            implementation: "resnet.jl";
+        }
+        
+        @veil(id: 43, name: "Convolution") {
+            equation: "(f * g)(t) = ∫ f(τ)g(t-τ)dτ";
+            parameters: ["kernel_size", "stride", "padding"];
+            tags: ["cnn", "feature_extraction"];
+            implementation: "conv.jl";
+        }
+        
+        @veil(id: 44, name: "Pooling") {
+            equation: "Max/average pooling";
+            parameters: ["pool_size", "stride"];
+            tags: ["dimensionality_reduction"];
+            implementation: "pooling.jl";
+        }
+        
+        @veil(id: 45, name: "L1 Regularization") {
+            equation: "λ Σ|w_i|";
+            parameters: ["lambda"];
+            tags: ["regularization", "sparsity"];
+            implementation: "l1_reg.jl";
+        }
+        
+        @veil(id: 46, name: "L2 Regularization") {
+            equation: "λ Σ w_i²";
+            parameters: ["lambda"];
+            tags: ["regularization", "weight_decay"];
+            implementation: "l2_reg.jl";
+        }
+        
+        @veil(id: 47, name: "Elastic Net") {
+            equation: "α₁ Σ|w_i| + α₂ Σ w_i²";
+            parameters: ["alpha1", "alpha2"];
+            tags: ["regularization", "hybrid"];
+            implementation: "elastic_net.jl";
+        }
+        
+        @veil(id: 48, name: "SVM") {
+            equation: "min (1/2)||w||² + C Σ ξ_i";
+            parameters: ["C", "kernel"];
+            tags: ["classification", "margin"];
+            implementation: "svm.jl";
+        }
+        
+        @veil(id: 49, name: "Kernel Trick") {
+            equation: "K(x_i, x_j) = φ(x_i)^T φ(x_j)";
+            parameters: ["kernel_type"];
+            tags: ["kernel_method", "nonlinear"];
+            implementation: "kernel_trick.jl";
+        }
+        
+        @veil(id: 50, name: "K-Means") {
+            equation: "Σ||x_i - μ_j||²";
+            parameters: ["num_clusters", "max_iterations"];
+            tags: ["clustering", "unsupervised"];
+            implementation: "kmeans.jl";
+        }
+        
+        @veil(id: 51, name: "Gaussian Mixture") {
+            equation: "p(x) = Σ π_k N(x|μ_k, Σ_k)";
+            parameters: ["num_components"];
+            tags: ["clustering", "probabilistic"];
+            implementation: "gmm.jl";
+        }
+        
+        @veil(id: 52, name: "EM Algorithm") {
+            equation: "θ^{(t+1)} = argmax Q(θ|θ^{(t)})";
+            parameters: ["max_iterations", "tolerance"];
+            tags: ["expectation_maximization", "latent_variable"];
+            implementation: "em.jl";
+        }
+        
+        @veil(id: 53, name: "PCA") {
+            equation: "Y = XW";
+            parameters: ["num_components"];
+            tags: ["dimensionality_reduction", "unsupervised"];
+            implementation: "pca.jl";
+        }
+        
+        @veil(id: 54, name: "LDA") {
+            equation: "w = S_w^{-1}(μ_1 - μ_2)";
+            parameters: ["num_components"];
+            tags: ["classification", "dimensionality_reduction"];
+            implementation: "lda.jl";
+        }
+        
+        @veil(id: 55, name: "Naive Bayes") {
+            equation: "P(y|x) ∝ P(y) ∏ P(x_i|y)";
+            parameters: [];
+            tags: ["classification", "probabilistic"];
+            implementation: "naive_bayes.jl";
+        }
+        
+        @veil(id: 56, name: "Logistic Regression") {
+            equation: "p = 1/(1 + e^{-(β₀ + β₁x)})";
+            parameters: [];
+            tags: ["classification", "linear"];
+            implementation: "logistic_regression.jl";
+        }
+        
+        @veil(id: 57, name: "Decision Tree") {
+            equation: "Gini impurity";
+            parameters: ["max_depth"];
+            tags: ["classification", "tree_based"];
+            implementation: "decision_tree.jl";
+        }
+        
+        @veil(id: 58, name: "Random Forest") {
+            equation: "Ensemble of trees";
+            parameters: ["num_trees", "max_depth"];
+            tags: ["ensemble", "bagging"];
+            implementation: "random_forest.jl";
+        }
+        
+        @veil(id: 59, name: "Gradient Boosting") {
+            equation: "F_m(x) = F_{m-1}(x) + γ_m h_m(x)";
+            parameters: ["num_boosters", "learning_rate"];
+            tags: ["ensemble", "boosting"];
+            implementation: "gradient_boosting.jl";
+        }
+        
+        @veil(id: 60, name: "Q-Learning") {
+            equation: "Q(s,a) = Q(s,a) + α[r + γ max Q(s',a') - Q(s,a)]";
+            parameters: ["alpha", "gamma", "epsilon"];
+            tags: ["reinforcement_learning", "temporal_difference"];
+            implementation: "qlearning.jl";
+        }
+        
+        @veil(id: 61, name: "Policy Gradient") {
+            equation: "∇J(θ) = E[∇ log π_θ(a|s) Q(s,a)]";
+            parameters: ["learning_rate"];
+            tags: ["reinforcement_learning", "policy"];
+            implementation: "policy_gradient.jl";
+        }
+        
+        @veil(id: 62, name: "Actor-Critic") {
+            equation: "Actor: π_θ, Critic: V_φ";
+            parameters: ["actor_lr", "critic_lr"];
+            tags: ["reinforcement_learning", "hybrid"];
+            implementation: "actor_critic.jl";
+        }
+        
+        @veil(id: 63, name: "DDPG") {
+            equation: "Deep Deterministic Policy Gradient";
+            parameters: ["actor_lr", "critic_lr", "tau"];
+            tags: ["reinforcement_learning", "continuous"];
+            implementation: "ddpg.jl";
+        }
+        
+        @veil(id: 64, name: "VAE") {
+            equation: "ELBO = E_q[log p(x|z)] - KL(q(z|x)||p(z))";
+            parameters: ["latent_dim"];
+            tags: ["generative", "variational"];
+            implementation: "vae.jl";
+        }
+        
+        @veil(id: 65, name: "GAN") {
+            equation: "min max V(D,G) = E_x[log D(x)] + E_z[log(1-D(G(z)))]";
+            parameters: ["latent_dim"];
+            tags: ["generative", "adversarial"];
+            implementation: "gan.jl";
+        }
+        
+        @veil(id: 66, name: "Wasserstein Distance") {
+            equation: "W(p,q) = inf E[||X-Y||]";
+            parameters: [];
+            tags: ["distance_metric", "optimal_transport"];
+            implementation: "wasserstein.jl";
+        }
+        
+        @veil(id: 67, name: "Mutual Information") {
+            equation: "I(X;Y) = H(X) - H(X|Y)";
+            parameters: [];
+            tags: ["information_theory", "correlation"];
+            implementation: "mutual_info.jl";
+        }
+        
+        @veil(id: 68, name: "Information Gain") {
+            equation: "IG = H(S) - Σ(|S_v|/|S|)H(S_v)";
+            parameters: [];
+            tags: ["decision_tree", "entropy"];
+            implementation: "information_gain.jl";
+        }
+        
+        @veil(id: 69, name: "Perplexity") {
+            equation: "PP = exp(-∑ p(w) log p(w))";
+            parameters: [];
+            tags: ["language_model", "evaluation"];
+            implementation: "perplexity.jl";
+        }
+        
+        @veil(id: 70, name: "BLEU Score") {
+            equation: "Modified precision with brevity penalty";
+            parameters: ["max_ngram"];
+            tags: ["machine_translation", "evaluation"];
+            implementation: "bleu.jl";
+        }
+        
+        @veil(id: 71, name: "F1 Score") {
+            equation: "F1 = 2(precision·recall)/(precision + recall)";
+            parameters: [];
+            tags: ["classification", "evaluation"];
+            implementation: "f1_score.jl";
+        }
+        
+        @veil(id: 72, name: "ROC-AUC") {
+            equation: "Area under ROC curve";
+            parameters: [];
+            tags: ["classification", "evaluation"];
+            implementation: "roc_auc.jl";
+        }
+        
+        @veil(id: 73, name: "Cosine Similarity") {
+            equation: "sim(x,y) = x·y / (||x|| ||y||)";
+            parameters: [];
+            tags: ["similarity", "vectors"];
+            implementation: "cosine_sim.jl";
+        }
+        
+        @veil(id: 74, name: "Jaccard Index") {
+            equation: "J(A,B) = |A∩B| / |A∪B|";
+            parameters: [];
+            tags: ["similarity", "sets"];
+            implementation: "jaccard.jl";
+        }
+        
+        @veil(id: 75, name: "Entropy") {
+            equation: "H(X) = -Σ p(x) log p(x)";
+            parameters: [];
+            tags: ["information_theory", "uncertainty"];
+            implementation: "entropy.jl";
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════
+    // SECTION 3: SIGNAL PROCESSING (76-100)
+    // ═══════════════════════════════════════════════════════════
+    
+    @category("signal", range: "76-100", emoji: "📡") {
+        @veil(id: 76, name: "Fourier Transform") {
+            equation: "F(ω) = ∫ f(t)e^{-jωt}dt";
+            parameters: [];
+            tags: ["frequency_domain"];
+            implementation: "fourier.jl";
+        }
+        
+        @veil(id: 77, name: "DFT") {
+            equation: "X[k] = Σ x[n]e^{-j2πkn/N}";
+            parameters: ["N"];
+            tags: ["discrete", "frequency"];
+            implementation: "dft.jl";
+        }
+        
+        @veil(id: 78, name: "FFT") {
+            equation: "Cooley-Tukey algorithm";
+            parameters: [];
+            tags: ["fast", "computational"];
+            implementation: "fft.jl";
+        }
+        
+        @veil(id: 79, name: "Z-Transform") {
+            equation: "X(z) = Σ x[n]z^{-n}";
+            parameters: [];
+            tags: ["discrete_time"];
+            implementation: "ztransform.jl";
+        }
+        
+        @veil(id: 80, name: "Laplace Transform") {
+            equation: "F(s) = ∫ f(t)e^{-st}dt";
+            parameters: [];
+            tags: ["continuous_time"];
+            implementation: "laplace.jl";
+        }
+        
+        @veil(id: 81, name: "Wavelet Transform") {
+            equation: "CWT(a,b) = ∫ f(t)ψ*((t-b)/a)dt";
+            parameters: ["wavelet_type"];
+            tags: ["time_frequency"];
+            implementation: "wavelet.jl";
+        }
+        
+        @veil(id: 82, name: "Autocorrelation") {
+            equation: "R_xx(τ) = E[x(t)x(t+τ)]";
+            parameters: [];
+            tags: ["correlation"];
+            implementation: "autocorr.jl";
+        }
+        
+        @veil(id: 83, name: "Cross-correlation") {
+            equation: "R_xy(τ) = E[x(t)y(t+τ)]";
+            parameters: [];
+            tags: ["correlation"];
+            implementation: "crosscorr.jl";
+        }
+        
+        @veil(id: 84, name: "PSD") {
+            equation: "S_xx(ω) = |X(ω)|²";
+            parameters: [];
+            tags: ["spectral"];
+            implementation: "psd.jl";
+        }
+        
+        @veil(id: 85, name: "Sampling Theorem") {
+            equation: "f_s ≥ 2f_max";
+            parameters: ["nyquist_freq"];
+            tags: ["discrete", "nyquist"];
+            implementation: "sampling.jl";
+        }
+        
+        @veil(id: 86, name: "Digital Filter") {
+            equation: "y[n] = Σ b_k x[n-k] - Σ a_k y[n-k]";
+            parameters: ["order"];
+            tags: ["filtering"];
+            implementation: "digital_filter.jl";
+        }
+        
+        @veil(id: 87, name: "IIR Filter") {
+            equation: "Infinite impulse response";
+            parameters: ["order"];
+            tags: ["feedback"];
+            implementation: "iir.jl";
+        }
+        
+        @veil(id: 88, name: "FIR Filter") {
+            equation: "Finite impulse response";
+            parameters: ["order"];
+            tags: ["feedforward"];
+            implementation: "fir.jl";
+        }
+        
+        @veil(id: 89, name: "Butterworth Filter") {
+            equation: "Maximally flat frequency response";
+            parameters: ["order", "cutoff_freq"];
+            tags: ["analog", "lowpass"];
+            implementation: "butterworth.jl";
+        }
+        
+        @veil(id: 90, name: "Chebyshev Filter") {
+            equation: "Ripple in passband";
+            parameters: ["order", "ripple"];
+            tags: ["analog"];
+            implementation: "chebyshev.jl";
+        }
+        
+        @veil(id: 91, name: "Bessel Filter") {
+            equation: "Linear phase response";
+            parameters: ["order"];
+            tags: ["analog", "linear_phase"];
+            implementation: "bessel.jl";
+        }
+        
+        @veil(id: 92, name: "Wiener Filter") {
+            equation: "Optimal MMSE filter";
+            parameters: ["signal_power", "noise_power"];
+            tags: ["optimal", "estimation"];
+            implementation: "wiener.jl";
+        }
+        
+        @veil(id: 93, name: "Adaptive Filter") {
+            equation: "LMS algorithm";
+            parameters: ["step_size"];
+            tags: ["learning"];
+            implementation: "adaptive_filter.jl";
+        }
+        
+        @veil(id: 94, name: "Matched Filter") {
+            equation: "Optimal for signal detection";
+            parameters: ["template"];
+            tags: ["detection"];
+            implementation: "matched_filter.jl";
+        }
+        
+        @veil(id: 95, name: "Hilbert Transform") {
+            equation: "y(t) = (1/π) ∫ x(τ)/(t-τ)dτ";
+            parameters: [];
+            tags: ["analytic_signal"];
+            implementation: "hilbert.jl";
+        }
+        
+        @veil(id: 96, name: "Cepstrum") {
+            equation: "Inverse FFT of log-FFT";
+            parameters: [];
+            tags: ["speech", "deconvolution"];
+            implementation: "cepstrum.jl";
+        }
+        
+        @veil(id: 97, name: "STFT") {
+            equation: "Windowed Fourier Transform";
+            parameters: ["window_size", "hop_size"];
+            tags: ["time_frequency"];
+            implementation: "stft.jl";
+        }
+        
+        @veil(id: 98, name: "Mel Scale") {
+            equation: "Perceptual frequency scale";
+            parameters: ["num_mels"];
+            tags: ["audio", "psychoacoustic"];
+            implementation: "mel_scale.jl";
+        }
+        
+        @veil(id: 99, name: "MFCC") {
+            equation: "Mel-Frequency Cepstral Coefficients";
+            parameters: ["num_coeffs"];
+            tags: ["speech", "features"];
+            implementation: "mfcc.jl";
+        }
+        
+        @veil(id: 100, name: "Goertzel Algorithm") {
+            equation: "Efficient single-frequency detection";
+            parameters: ["target_freq"];
+            tags: ["dtmf", "tone_detection"];
+            implementation: "goertzel.jl";
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // REMAINING SECTIONS (101-777) — DEFER TO CONTINUATION
+    // ═══════════════════════════════════════════════════════════
+    // Robotics (101-125), Computer Vision (126-150),
+    // IoT/Communications (151-175), Optimization (176-200),
+    // Physics (201-225), Estimation (226-250), Navigation (251-275),
+    // Multi-Agent (276-300), Data/Storage (326-350),
+    // Cryptography (301-325), Energy (351-375), Manufacturing (376-400),
+    // Sacred-Scientific (401-500), Quantum (501-550),
+    // Exotic Materials (551-600, 681-700), Future Tech (601-680),
+    // Biotech/Consciousness (701-777)
+
+    @emit VeilManifestCreated(
+        total_registered: 75,
+        total_planned: 777,
+        categories: 13,
+        status: "GENESIS_PHASE_1"
+    );
+}

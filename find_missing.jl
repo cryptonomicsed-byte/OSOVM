@@ -1,0 +1,11 @@
+include("src/veils_777.jl")
+using .Veils777
+all_v = Veils777.get_all_veils()
+ids = Set(v.id for v in all_v)
+missing = sort(collect(setdiff(Set(1:777), ids)))
+println("total present: ", length(ids))
+println("total missing: ", length(missing))
+println("missing id ranges: ", missing)
+println()
+real_count = count(v -> !(occursin("description", lowercase(v.equation)) || occursin(r"Veil \d+$", v.name)), all_v)
+println("real/authored veils: ", real_count)

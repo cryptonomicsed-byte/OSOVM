@@ -1,0 +1,125 @@
+@contract(
+    name: "Veil777",
+    version: "v7.0",
+    author: "Bínò ÈL Guà Ọmọ Kọ́dà Àṣẹ",
+    timestamp: "2025-11-11T11:11:11.11Z",
+    flaw: "Ase"
+) {
+
+    @immutable    N_VEILS = 777;
+    @immutable    MAX_SIMS_PER_DAY = 7;
+    @immutable    SIM_COST = 7;  // Ase
+    @immutable    SUCCESS_THRESHOLD = 0.777;
+    @immutable    QUORUM_THRESHOLD = 7;  // of 12
+    @immutable    TITHE_RATE = 0.0777;  // 7.77%
+    @immutable    SPLIT = [50, 25, 15, 10];  // [esu, inheritance, council, burn]
+
+    @struct VeilInfo {
+        name: string;
+        category: uint8;  // 0=Control, 1=AI, 2=IoT, 3=Opt, 4=Quantum
+        code: bytes;      // Julia bytecode
+        novelty: float;   // 0.0–1.0
+    }
+
+    @struct SimEntry {
+        veilId: uint16;
+        timestamp: uint64;
+        f1: float;
+        witnesses: uint16;  // bitmask
+    }
+
+    @state    veils: [VeilInfo; N_VEILS];
+    @state    simLog: map<address, [SimEntry; 7]>;  // rolling 7-day
+    @state    witnesses: [address; 12];
+    @state    treasury: map<string, uint256>;
+
+    @event    SimStarted(citizen: address, veilId: uint16, cost: uint256);
+    @event    SimCompleted(citizen: address, veilId: uint16, f1: float, mint: uint256);
+    @event    TithePaid(amount: uint256, split: [uint256; 4]);
+
+    @init(
+        veilData: [VeilInfo; N_VEILS],
+        witnessList: [address; 12]
+    ) {
+        veils = veilData;
+        witnesses = witnessList;
+        treasury["esu"] = 0;
+        treasury["inheritance"] = 0;
+        treasury["council"] = 0;
+        treasury["burn"] = 0;
+    }
+
+    @opcode 0x70 startSim(veilId: uint16) {
+        @require veilId < N_VEILS "invalid veil";
+        @require @balanceOf(@msg.sender, "Ase") >= SIM_COST "insufficient Ase";
+        @require @dailyCount(@msg.sender) < MAX_SIMS_PER_DAY "daily limit";
+        
+        @burn Ase from @msg.sender amount SIM_COST;
+        @logSimStart(@msg.sender, veilId);
+        @emit SimStarted(@msg.sender, veilId, SIM_COST);
+        
+        // Off-chain: run sim in VeilOS
+        @triggerOffchain("veil_engine", {veilId, citizen: @msg.sender});
+    }
+
+    @opcode 0x71 witnessSim(citizen: address, veilId: uint16, f1: float) {
+        @require @is_witness(@msg.sender) "not witness";
+        
+        @let entry = &simLog[citizen][@latestIndex(citizen)];
+        @require entry.veilId == veilId "mismatch";
+        
+        @let bit = @witnessBit(@msg.sender);
+        @require (entry.witnesses & bit) == 0 "already voted";
+        
+        entry.witnesses |= bit;
+        entry.f1 = f1;
+        
+        @if @popcount(entry.witnesses) >= QUORUM_THRESHOLD {
+            @finalizeSim(citizen, veilId, f1);
+        }
+    }
+
+    @internal _finalizeSim(citizen: address, veilId: uint16, f1: float) {
+        @require f1 >= SUCCESS_THRESHOLD "below threshold";
+        
+        @let base = 1.0;
+        @let bonus = veils[veilId].novelty * 2.0;
+        @let replication = @noveltyBonus(veilId);
+        @let gross = (base + bonus) * replication;
+        @let tithe = gross * TITHE_RATE;
+        @let net = gross - tithe;
+        
+        @mint Àṣẹ to citizen amount net;
+        @distributeTithe(tithe);
+        @emit SimCompleted(citizen, veilId, f1, net);
+        
+        // Ouroboros: if F1 < 0.5, revert
+        @if f1 < 0.5 { @revertToGenesis(citizen); }
+    }
+
+    @internal _distributeTithe(amount: uint256) {
+        @let shares = [amount * SPLIT[i] / 100 for i in 0..4];
+        
+        treasury["esu"] += shares[0];
+        treasury["inheritance"] += shares[1];
+        treasury["council"] += shares[2];
+        @burn Àṣẹ amount shares[3];
+        
+        @emit TithePaid(amount, shares);
+    }
+
+    @view dailyCount(citizen: address) -> uint8 {
+        @let today = @dayFromTimestamp(block.timestamp);
+        @let count = 0;
+        
+        @for entry in simLog[citizen] {
+            @if @dayFromTimestamp(entry.timestamp) == today { count += 1; }
+        }
+        
+        @return count;
+    }
+
+    @view is_witness(addr: address) -> bool { ... }
+    @view witnessBit(addr: address) -> uint16 { ... }
+
+}
