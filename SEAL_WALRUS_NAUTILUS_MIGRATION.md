@@ -14,20 +14,34 @@ how it was verified.
       Omo-Koda2's Ọbàtálá `:4002` service (already Clojure per prior work).
       Nothing to change in this repo.
 
+## Real architecture (confirmed 2026-07-20, corrects the original version of this doc)
+
+GlyphIndex "sealing" and Sui "Seal" are two different things that share a
+word:
+
+- **GlyphIndex / GIX1** (memory vault, client-side AES-256-GCM under a
+  BIPỌ̀N39-derived keyring) — this is the CORRECT, deliberate, canonical
+  design. Verified: Vantage's `backend/glyph_index.py` (the frozen
+  canonical reference implementation per `GLYPHINDEX_SPEC.md`) uses the
+  exact same AES-256-GCM/keyring scheme. OSOVM's `glyphindex.jl` is
+  correctly a synced port of that same wire format. **Not a gap, not
+  touching it.**
+- **Real Sui Seal** (decentralized key servers + on-chain `seal_approve`
+  policy) — canonical, real implementation already lives in Omo-Koda2
+  (`omokoda-core/src/memory/seal_bridge.rs` + `tee.rs`), gating that
+  agent's TEE memory envelope's decryption key via the real
+  `seal-cli fetch-keys` flow. This is OSOVM's sibling project's job, not
+  OSOVM's — no duplicate integration belongs here.
+
 ## Audit: every "seal" in the codebase, and what it actually is today
 
-- [ ] `src/glyphindex.jl` — "sealing/unsealing" is a custom AES-256-GCM
-      scheme under BIPỌ̀N39-derived keys (see file header comment). This is
-      the real candidate for Seal: replace the custom encryption with real
-      **Seal** threshold encryption (`@mysten/seal` SDK + on-chain
-      `seal_approve` access-control policy in Move). Needs a design decision
-      on what the Move-side access policy should check (BIPỌ̀N39 identity?
-      wallet ownership? something else).
+- [x] `src/glyphindex.jl` — CONFIRMED CORRECT AS-IS (see above). No action.
 - [ ] `src/glyphindex.jl` — `walrus_blob_id::String` field exists but is
       never populated by a real Walrus API call anywhere (grepped: zero
       Walrus SDK/HTTP calls in the repo). Wire real blob upload/fetch via
       Walrus (`walrus store` / publisher-aggregator HTTP API) instead of
-      leaving it as a dead placeholder field.
+      leaving it as a dead placeholder field. Still a real, standalone gap
+      independent of the Seal question above.
 - [ ] `src/zangbeto_receipts.jl` — `seal` field is a SHA256 hash
       (`bytes2hex(sha256(seal_data))[1:32]`) used as a receipt commitment,
       not an encrypted secret. **Needs a decision**: is this meant to
@@ -39,11 +53,11 @@ how it was verified.
       mint"`). Same question as above — likely a ceremonial
       commitment/checksum, not a secrets-encryption use case. Confirm intent
       before touching.
-- [ ] `move_contracts/` — zero Seal/Walrus/Nautilus references anywhere.
-      Once the Move-side access-control policy design is decided (see
-      glyphindex item above), add the real `seal_approve`-style entry
-      function(s) to the relevant module (`privacy_layer.move` is the
-      likely home).
+- [x] `move_contracts/` — no `seal_approve` needed here. Real Seal
+      integration and its on-chain policy belong to Omo-Koda2
+      (`seal_bridge.rs` gates that project's own TEE memory envelope) —
+      out of OSOVM's scope, not duplicating it. If OSOVM ever needs its
+      own Seal-gated on-chain content in the future, revisit then.
 
 ## Nautilus (verifiable off-chain compute)
 
