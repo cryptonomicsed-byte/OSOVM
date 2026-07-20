@@ -10,7 +10,7 @@ using SHA
 export SacredTimeContext, SacredTimeGate
 export create_time_context, check_execution_gate
 export enforce_sabbath!, enforce_jubilee!, apply_tithe!
-export estimate_btc_height, format_sacred_time
+export estimate_btc_height, format_sacred_time, active_veils_for_day, veil_alignment_bonus, to_dict
 
 # ============================================================================
 # 1. BTC TIME — Block-Anchored Canonical Time (Standalone)

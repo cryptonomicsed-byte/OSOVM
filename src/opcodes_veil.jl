@@ -18,19 +18,19 @@ export OPCODE_VEIL, OPCODE_VEIL_COMPOSE, OPCODE_VEIL_SCORE,
 # ============================================================================
 
 """Main veil dispatcher - fetch veil ID and invoke execution"""
-const OPCODE_VEIL = 0x12::UInt16
+const OPCODE_VEIL = 0x0012
 
 """Veil composition operator - cascade multiple veils"""
-const OPCODE_VEIL_COMPOSE = 0x13::UInt16
+const OPCODE_VEIL_COMPOSE = 0x0013
 
 """Veil F1 scoring - evaluate and reward"""
-const OPCODE_VEIL_SCORE = 0x14::UInt16
+const OPCODE_VEIL_SCORE = 0x0014
 
 """Conditional veil execution"""
-const OPCODE_VEIL_IF = 0x15::UInt16
+const OPCODE_VEIL_IF = 0x0015
 
 """Veil error handling"""
-const OPCODE_VEIL_CATCH = 0x16::UInt16
+const OPCODE_VEIL_CATCH = 0x0016
 
 # ============================================================================
 # OPCODE ALLOCATION STRATEGY
@@ -71,8 +71,6 @@ ALLOCATION:
 """
 
 # Build opcode mapping at module load time
-const VEIL_OPCODE_MAP = build_veil_opcode_map()
-const OPCODE_VEIL_MAP = build_opcode_veil_map()
 
 # ============================================================================
 # OPCODE BUILDER FUNCTIONS
@@ -96,8 +94,13 @@ function build_veil_opcode_map()::Dict{Int, UInt16}
     end
     
     # Signal (76-100)
+    # Base was 0x4A (74), which collided with the tail of the ML/AI range
+    # above (26:75 -> opcodes 0x1A:0x4B, i.e. up through 75/0x4B) -- veils
+    # 75 and 77 both mapped to opcode 0x4B, and veils 74 and 76 both
+    # mapped to opcode 0x4A. Correct base is 0x4C (76), immediately after
+    # ML/AI's last opcode (0x4B/75).
     for id in 76:100
-        opcode_map[id] = UInt16(0x4A + (id - 76))
+        opcode_map[id] = UInt16(0x4C + (id - 76))
     end
     
     # Robotics (101-125)
@@ -196,8 +199,14 @@ function build_opcode_veil_map()::Dict{UInt16, Int}
     for (veil_id, opcode) in VEIL_OPCODE_MAP
         reverse_map[opcode] = veil_id
     end
+
+
     return reverse_map
 end
+
+# Build opcode mapping at module load time (after both builder functions are defined)
+const VEIL_OPCODE_MAP = build_veil_opcode_map()
+const OPCODE_VEIL_MAP = build_opcode_veil_map()
 
 # ============================================================================
 # PUBLIC API
@@ -288,15 +297,22 @@ Validate that all 777 veils have unique opcodes.
 function validate_opcode_map()::Bool
     veil_ids = collect(keys(VEIL_OPCODE_MAP))
     opcodes = collect(values(VEIL_OPCODE_MAP))
-    
-    # Check all veils 1-777 except 351-400, 414-413 are covered
-    expected_count = 777
+
+    # build_veil_opcode_map() covers 1:350 and 401:777 -- veils 351:400 are
+    # a genuine, intentional gap (never allocated a tier range), so the
+    # correct expected count is 727, not the whole 1:777 span. This was
+    # previously hardcoded to 777, which made validate_opcode_map() always
+    # return false regardless of whether the map was actually internally
+    # consistent.
+    expected_ids = union(1:350, 401:777)
+    expected_count = length(expected_ids)
     actual_count = length(unique(veil_ids))
-    
+    all_expected_present = Set(expected_ids) == Set(veil_ids)
+
     # Check opcodes are unique
     unique_opcodes = length(unique(opcodes))
-    
-    return actual_count == expected_count && unique_opcodes == actual_count
+
+    return actual_count == expected_count && unique_opcodes == actual_count && all_expected_present
 end
 
 """

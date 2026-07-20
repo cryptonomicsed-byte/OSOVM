@@ -797,39 +797,6 @@ end
 # 8. METRICS & F1 SCORING
 # ============================================================================
 
-function compute_f1(sim::SimulationState)::Float64
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
-    total_tn = 0
-
-    for entity in sim.entities
-        err = vec3_sub(entity.position, entity.target_position)
-        pos_error = vec3_mag(err)
-        within_tolerance = pos_error <= entity.position_tolerance
-
-        speed = vec3_mag(entity.velocity)
-        settling = within_tolerance && speed < 1.0
-
-        force_mag = vec3_mag(entity.state.total_force)
-        veils_active = force_mag > 1e-6 && !isempty(entity.veils)
-
-        if within_tolerance && (veils_active || settling)
-            total_tp += 1
-        elseif within_tolerance && !veils_active && !settling
-            total_fp += 1
-        elseif !within_tolerance && veils_active
-            total_fn += 1
-        else
-            total_tn += 1
-        end
-    end
-
-    p = total_tp + total_fp > 0 ? total_tp / (total_tp + total_fp) : 0.0
-    r = total_tp + total_fn > 0 ? total_tp / (total_tp + total_fn) : 0.0
-    return p + r > 0 ? 2.0 * (p * r) / (p + r) : 0.0
-end
-
 function compute_metrics(sim::SimulationState)::SimulationMetrics
     total_energy = 0.0
     convergence_sum = 0.0
@@ -848,11 +815,7 @@ function compute_metrics(sim::SimulationState)::SimulationMetrics
     sim.metrics.f1_score = f1
     sim.metrics.convergence_rate = convergence_sum / max(length(sim.entities), 1)
     sim.metrics.total_energy = total_energy
-    # Relative energy drift against a MEANINGFUL scale: the larger of the initial
-    # energy, current energy, or a 1.0 floor. Using a 1e-10 floor made drift explode
-    # to ~1e11 whenever the net initial energy was ~0 (e.g. KE/PE cancel, or velocity
-    # set after init) — a metric artifact, not a real blowup. This is bounded + sane.
-    sim.metrics.energy_drift = abs(total_energy - sim.initial_energy) / max(abs(sim.initial_energy), abs(total_energy), 1.0)
+    sim.metrics.energy_drift = abs(total_energy - sim.initial_energy) / max(abs(sim.initial_energy), 1e-10)
 
     # Energy efficiency: ratio of useful work to total energy expended
     sim.metrics.energy_efficiency = total_energy > 0 ? sim.metrics.convergence_rate / (1.0 + abs(total_energy)) : 1.0
@@ -893,17 +856,8 @@ function batch_simulation(
     f1_avg = mean([m.f1_score for m in metrics_history])
     sim.metrics.f1_score = f1_avg
 
-    # Task quality (F1) — measures task SUCCESS, not physical validity. A bare sim
-    # with no scored task has F1=0 and reads DIVERGED here — that is expected and does
-    # NOT mean the physics diverged (see Stability, which is the real health signal).
-    task_status = f1_avg >= 0.9 ? "CONVERGED" : (f1_avg >= 0.5 ? "PARTIAL" : "DIVERGED")
-    # Physical stability — SEPARATE from F1: finite + bounded state + energy drift in tolerance.
-    finite_ok = all(isfinite(e.position.x) && isfinite(e.position.y) && isfinite(e.position.z) &&
-                    isfinite(e.velocity.x) && isfinite(e.velocity.y) && isfinite(e.velocity.z)
-                    for e in sim.entities)
-    bounded_ok = all(vec3_mag(e.velocity) < 1e6 for e in sim.entities)
-    stability = (finite_ok && bounded_ok && sim.metrics.energy_drift < 10.0) ? "STABLE" : "UNSTABLE"
-    println("[VeilSim] Batch complete | Task=$task_status (F1=$(round(f1_avg, digits=4))) | Stability=$stability | E_drift=$(round(sim.metrics.energy_drift, digits=6))")
+    status = f1_avg >= 0.9 ? "CONVERGED" : (f1_avg >= 0.5 ? "PARTIAL" : "DIVERGED")
+    println("[VeilSim] Batch complete | F1=$(round(f1_avg, digits=4)) | Status=$status | E_drift=$(round(sim.metrics.energy_drift, digits=6))")
 
     return sim, metrics_history
 end
