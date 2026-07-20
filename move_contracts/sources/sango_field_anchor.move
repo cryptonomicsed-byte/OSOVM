@@ -227,9 +227,6 @@ module techgnosis::sango_field_anchor {
 
     // ===== Tests =====
 
-    #[test_only]
-    use sui::tx_context;
-
     #[test]
     fun exp_halves_at_one_half_life() {
         assert!(decayed(1000, KERNEL_EXP, 3600_000, 3600_000) == 500, 0);
