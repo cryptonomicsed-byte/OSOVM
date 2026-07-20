@@ -36,12 +36,17 @@ word:
 ## Audit: every "seal" in the codebase, and what it actually is today
 
 - [x] `src/glyphindex.jl` — CONFIRMED CORRECT AS-IS (see above). No action.
-- [ ] `src/glyphindex.jl` — `walrus_blob_id::String` field exists but is
-      never populated by a real Walrus API call anywhere (grepped: zero
-      Walrus SDK/HTTP calls in the repo). Wire real blob upload/fetch via
-      Walrus (`walrus store` / publisher-aggregator HTTP API) instead of
-      leaving it as a dead placeholder field. Still a real, standalone gap
-      independent of the Seal question above.
+- [x] `src/glyphindex.jl` — `walrus_blob_id::String` field CONFIRMED CORRECT
+      AS-IS, same pattern as Seal above. Verified: Vantage's own
+      `backend/routers/glyph_vault.py` (the canonical HTTP layer) also just
+      accepts a caller-supplied `walrus_blob_id` string and never calls
+      Walrus itself. The real Walrus HTTP client (`PUT
+      {publisher}/v1/blobs`, real publisher/aggregator URLs) already exists
+      in Omo-Koda2 (`omokoda-core/src/memory/walrus.rs` +
+      `tools/walrus_tool.rs`) and hands the resulting blob id *into* the
+      vault as metadata — the vault layer deliberately never does storage
+      upload itself, in every repo, by design. Building an HTTP client into
+      glyphindex.jl would duplicate that and break the pattern. Not a gap.
 - [ ] `src/zangbeto_receipts.jl` — `seal` field is a SHA256 hash
       (`bytes2hex(sha256(seal_data))[1:32]`) used as a receipt commitment,
       not an encrypted secret. **Needs a decision**: is this meant to
