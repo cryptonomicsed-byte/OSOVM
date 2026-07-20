@@ -137,7 +137,16 @@ module FFI
     end
     
     # Move FFI (resource safety)
-    function stake_ase(vm::VMState, sender::String, amount::Float64)::Bool
+    function stake_ase(vm::VMState, sender::String, amount::Real)::Bool
+        # amount must be non-negative -- previously balance >= amount let a
+        # negative amount pass the check and then INCREASE the sender's
+        # balance (subtracting a negative), a real exploit. Real (not
+        # Float64) also accepts plain JSON integers, which previously
+        # crashed with a MethodError since no Int64 method existed.
+        amount = Float64(amount)
+        if amount < 0.0
+            return false
+        end
         balance = get(vm.ase_balance, sender, 0.0)
         if balance >= amount
             vm.ase_balance[sender] = balance - amount
@@ -147,7 +156,13 @@ module FFI
         return false
     end
     
-    function unstake_ase(vm::VMState, sender::String, amount::Float64)::Bool
+    function unstake_ase(vm::VMState, sender::String, amount::Real)::Bool
+        # Same negative-amount exploit as stake_ase, plus the same
+        # Int64-vs-Float64 crash; fixed the same way.
+        amount = Float64(amount)
+        if amount < 0.0
+            return false
+        end
         staked = get(vm.staked, sender, 0.0)
         if staked >= amount
             vm.staked[sender] = staked - amount
@@ -300,8 +315,16 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         
     elseif opcode == 0x22  # TRANSFER
         to = get(args, :to, "")
-        amount = get(args, :amount, 0.0)
-        
+        amount = Float64(get(args, :amount, 0.0))
+
+        # amount < 0 previously passed `from_balance >= amount` for any
+        # sender (even balance 0), then INCREASED the sender's balance
+        # (subtracting a negative) while DECREASING the recipient's --
+        # a real balance-manipulation exploit against any wallet address.
+        if amount < 0.0
+            return Dict("transferred" => 0.0, "success" => false, "error" => "negative_amount_rejected")
+        end
+
         from_balance = get(vm.ase_balance, vm.current_sender, 0.0)
         if from_balance >= amount
             vm.ase_balance[vm.current_sender] = from_balance - amount
