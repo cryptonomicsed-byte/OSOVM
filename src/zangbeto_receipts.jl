@@ -11,10 +11,20 @@ using SHA
 include("seal_bridge.jl")
 using .SealBridge
 
+include("job_spec.jl")
+using .JobSpec
+
+include("merkle.jl")
+using .Merkle
+
+include("checkpoint_export.jl")
+using .CheckpointExport
+
 export ZangbetoReceipt, WitnessVote, ReceiptBundle
 export create_receipt, encode_cbor, verify_receipt
 export collect_witness_votes, check_quorum
 export generate_move_verify_call, receipt_to_anchor
+export JobReceiptBundle, create_job_receipt
 
 # ============================================================================
 # 1. RECEIPT DATA STRUCTURES
@@ -74,6 +84,96 @@ struct ReceiptBundle
                                 # string when SEAL_* env vars aren't configured
                                 # (fail-open, same as Omo-Koda2's seal_bridge.rs)
                                 # -- never a fake value.
+end
+
+"""
+Receipt for the general Job → Proof flow (any SimJobSpec: OSOVM's own
+:dsl veil catalog OR a :custom CubeSandbox-run arbitrary job). Unlike
+ZangbetoReceipt (which is VeilSim-shaped: veil_ids, opcodes_executed),
+this covers any job whose worker produced a checkpoint stream --
+including sandboxes that ran outside this repo entirely. See
+CUBESANDBOX_JOB_PIPELINE.md for the full external-worker contract this
+receipt is the OSOVM-side half of.
+"""
+struct JobReceiptBundle
+    job_id::String                  # JobSpec.job_id(spec) -- the spec's own hash
+    spec_kind::Symbol                # :dsl or :custom
+    creator_wallet::String
+    checkpoint_count::Int
+    checkpoint_merkle_root::String   # hex; the commitment validators sample against
+    final_metrics::Dict{String, Float64}
+    walrus_blob_id::String           # where the full checkpoint export actually lives
+                                      # (uploaded by the worker -- OSOVM never uploads
+                                      # storage itself, same pattern as glyphindex.jl)
+    votes::Vector{WitnessVote}
+    quorum_met::Bool
+    total_approvals::Int
+    status::String                   # "VERIFIED", "QUORUM_FAILED"
+    seal::String                     # Layer 1: SHA-256 tamper-evidence commitment
+    seal_dek_fingerprint::String     # Layer 2 ("dual seal"): see ReceiptBundle docstring
+    created_at::DateTime
+end
+
+"""
+Build a JobReceiptBundle from a validated SimJobSpec and the checkpoint
+stream a worker (a CubeSandbox job or OSOVM's own VeilSim run) produced.
+`walrus_blob_id` is caller-supplied -- the worker already uploaded the
+full canonical checkpoint export before calling this (see
+CheckpointExport.canonical_checkpoint_bytes / CUBESANDBOX_JOB_PIPELINE.md);
+this function only ever handles the Merkle root and metrics, never the
+raw checkpoint data or any storage upload itself.
+
+Throws on an invalid spec or empty checkpoint list -- a receipt for a
+job that produced no checkpoints or violates its own spec is not a
+receipt, it's a lie.
+"""
+function create_job_receipt(spec::SimJobSpec, checkpoints::Vector{CheckpointExport.Checkpoint},
+                             final_metrics::Dict{String, Float64}, walrus_blob_id::AbstractString)::JobReceiptBundle
+    errors = validate_spec(spec)
+    isempty(errors) || error("invalid job spec: $(join(errors, "; "))")
+    isempty(checkpoints) && error("cannot create a receipt for zero checkpoints")
+
+    for metric in spec.metrics_schema
+        haskey(final_metrics, metric) || error("final_metrics missing declared metric \"$metric\"")
+    end
+
+    jid = job_id(spec)
+    leaves = checkpoint_leaves(checkpoints)
+    root = merkle_root(leaves)
+    root_hex = bytes2hex(root)
+
+    # f1_score, if the job declares it, drives the same witness-approval
+    # threshold as the veil path; jobs that don't track f1_score at all
+    # (a legitimate scientific-study job might not) fall back to the
+    # lower base-approval threshold rather than crashing.
+    f1 = get(final_metrics, "f1_score", 0.0)
+
+    votes = collect_witness_votes(root_hex, f1)
+    quorum_met, approvals = check_quorum(votes)
+    status = quorum_met ? "VERIFIED" : "QUORUM_FAILED"
+
+    # Layer 1: SHA-256 tamper-evidence commitment over the job identity
+    # and its checkpoint root together (binds the receipt to BOTH which
+    # job this is and what it actually produced).
+    seal_data = "job-seal:$jid:$root_hex:$approvals"
+    seal = bytes2hex(sha256(seal_data))[1:32]
+
+    # Layer 2 ("dual seal"): real Sui Seal consultation, when configured.
+    seal_dek_fingerprint = try
+        fp = SealBridge.try_seal_fingerprint()
+        fp === nothing ? "" : fp
+    catch e
+        @warn "Seal fetch configured but failed; falling back to SHA-256-only commitment" exception=e
+        ""
+    end
+
+    println("[Zangbeto] Job $jid ($(spec.kind)): $status ($approvals/$TOTAL_WITNESSES witnesses, $(length(checkpoints)) checkpoints)")
+
+    JobReceiptBundle(
+        jid, spec.kind, spec.creator_wallet, length(checkpoints), root_hex,
+        final_metrics, String(walrus_blob_id), votes, quorum_met, approvals,
+        status, "job-$seal", seal_dek_fingerprint, now(),
+    )
 end
 
 # ============================================================================
@@ -255,27 +355,27 @@ end
 # 4. WITNESS QUORUM — 7/12 Deterministic Verification
 # ============================================================================
 
-"""
-Collect witness votes for a receipt.
-Each witness independently verifies the receipt hash.
-Deterministic: same receipt always gets same votes.
-"""
-function collect_witness_votes(receipt::ZangbetoReceipt)::Vector{WitnessVote}
+"""Generic core: witness simulation over any (receipt_hash, f1_score)
+pair, independent of which receipt struct produced them. Shared by
+collect_witness_votes(::ZangbetoReceipt) and the job-receipt path
+(create_job_receipt) so both use the identical, single witness-approval
+algorithm rather than two copies drifting apart."""
+function collect_witness_votes(receipt_hash::AbstractString, f1_score::Float64)::Vector{WitnessVote}
     votes = WitnessVote[]
 
     for w in 0:(TOTAL_WITNESSES-1)
         # Deterministic witness hash
-        witness_data = "witness-$w-$(receipt.receipt_hash)"
+        witness_data = "witness-$w-$receipt_hash"
         witness_hash = bytes2hex(sha256(witness_data))
 
         # Witness approves if hash starts with 0-b (75% base approval rate)
         # High-F1 sims get higher approval (first char < 'd' = 81%)
-        threshold = receipt.f1_score >= 0.9 ? 'd' : 'c'
+        threshold = f1_score >= 0.9 ? 'd' : 'c'
         approved = witness_hash[1] < threshold
 
         push!(votes, WitnessVote(
             w,
-            receipt.receipt_hash,
+            String(receipt_hash),
             approved,
             witness_hash,
             now()
@@ -284,6 +384,9 @@ function collect_witness_votes(receipt::ZangbetoReceipt)::Vector{WitnessVote}
 
     votes
 end
+
+collect_witness_votes(receipt::ZangbetoReceipt)::Vector{WitnessVote} =
+    collect_witness_votes(receipt.receipt_hash, receipt.f1_score)
 
 """
 Check if quorum is met (7/12 witnesses must approve).
