@@ -8,6 +8,9 @@ module ZangbetoReceipts
 using Dates
 using SHA
 
+include("seal_bridge.jl")
+using .SealBridge
+
 export ZangbetoReceipt, WitnessVote, ReceiptBundle
 export create_receipt, encode_cbor, verify_receipt
 export collect_witness_votes, check_quorum
@@ -61,7 +64,16 @@ struct ReceiptBundle
     quorum_met::Bool
     total_approvals::Int
     status::String             # "VERIFIED", "SLASHED", "QUORUM_FAILED"
-    seal::String               # Zangbeto seal hash
+    seal::String               # Layer 1: SHA-256 tamper-evidence commitment
+                                # (always present, VM-native, no external deps)
+    seal_dek_fingerprint::String
+                                # Layer 2 ("dual seal"): SHA-256 fingerprint of a
+                                # real DEK fetched from Sui Seal's decentralized
+                                # key servers (see seal_bridge.jl), proving a real
+                                # Seal consultation gated this receipt. Empty
+                                # string when SEAL_* env vars aren't configured
+                                # (fail-open, same as Omo-Koda2's seal_bridge.rs)
+                                # -- never a fake value.
 end
 
 # ============================================================================
@@ -297,15 +309,26 @@ function verify_receipt(receipt::ZangbetoReceipt)::ReceiptBundle
         "QUORUM_FAILED"
     end
 
-    # Generate seal
+    # Layer 1: SHA-256 tamper-evidence commitment (always present)
     seal_data = "zangbeto-seal:$(receipt.receipt_hash):$approvals"
     seal = bytes2hex(sha256(seal_data))[1:32]
+
+    # Layer 2 ("dual seal"): real Sui Seal consultation, when configured.
+    # Fail-open: unconfigured -> empty string; misconfigured (throws) ->
+    # logged and left empty, never faked as if it succeeded.
+    seal_dek_fingerprint = try
+        fp = SealBridge.try_seal_fingerprint()
+        fp === nothing ? "" : fp
+    catch e
+        @warn "Seal fetch configured but failed; falling back to SHA-256-only commitment" exception=e
+        ""
+    end
 
     println("[Zangbeto] Receipt $(receipt.receipt_id): $status ($approvals/$TOTAL_WITNESSES witnesses)")
 
     ReceiptBundle(
         receipt, votes, quorum_met, approvals, status,
-        "zang-$seal"
+        "zang-$seal", seal_dek_fingerprint
     )
 end
 
@@ -418,6 +441,7 @@ function receipt_to_anchor(bundle::ReceiptBundle)::Dict{String, Any}
         "receipt_id" => r.receipt_id,
         "status" => bundle.status,
         "seal" => bundle.seal,
+        "seal_dek_fingerprint" => bundle.seal_dek_fingerprint,
         "anchors" => Dict(
             "bitcoin" => Dict(
                 "method" => "OP_RETURN",

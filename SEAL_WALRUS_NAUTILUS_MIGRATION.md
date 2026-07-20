@@ -47,17 +47,26 @@ word:
       vault as metadata — the vault layer deliberately never does storage
       upload itself, in every repo, by design. Building an HTTP client into
       glyphindex.jl would duplicate that and break the pattern. Not a gap.
-- [ ] `src/zangbeto_receipts.jl` — `seal` field is a SHA256 hash
-      (`bytes2hex(sha256(seal_data))[1:32]`) used as a receipt commitment,
-      not an encrypted secret. **Needs a decision**: is this meant to
-      protect confidential content (→ migrate to real Seal), or is it
-      correctly just a commitment/integrity hash (→ leave as-is, rename to
-      avoid the misleading "seal" terminology overlapping with Sui Seal)?
-- [ ] `src/veilos_antispam.jl` — `seal` field, same pattern: SHA256 hash of
-      a fixed ritual string (`"Ọbàtálá seals the 777 Veils and the first
-      mint"`). Same question as above — likely a ceremonial
-      commitment/checksum, not a secrets-encryption use case. Confirm intent
-      before touching.
+- [x] `src/zangbeto_receipts.jl` — DUAL SEAL implemented. `ReceiptBundle`
+      now carries both: Layer 1 `seal` (existing SHA-256 tamper-evidence
+      commitment, unchanged) + Layer 2 `seal_dek_fingerprint` (new — a
+      real DEK fetched from Sui Seal's key servers via `src/seal_bridge.jl`,
+      a direct port of Omo-Koda2's verified `seal_bridge.rs`
+      request→fetch-keys pipeline, SHA-256-fingerprinted rather than held
+      as a key, consistent with OSOVM never touching decryption keys).
+      Fail-open: empty string when `SEAL_*` env vars aren't configured,
+      never a fake value. Verified end-to-end both unconfigured (empty
+      fingerprint) and configured (real 64-hex-char fingerprint via a real
+      subprocess pipeline) against a live receipt. Zero regressions on the
+      full test suite. `test/seal_bridge_test.jl`: 13/13.
+- [x] `src/veilos_antispam.jl` — same DUAL SEAL treatment, same
+      `seal_bridge.jl`. `SimulationReceipt` now carries `seal` (Layer 1,
+      unchanged) + `seal_dek_fingerprint` (Layer 2). Also fixed 2 unrelated
+      pre-existing bugs surfaced while getting this path to actually run
+      for the first time (it had zero prior test coverage): missing
+      `using Random` (crashed on `shuffle`), and `PILGRIMAGE_GATES` being
+      indexed as a Dict when it's an ordered `Vector{Pair}`. Verified
+      end-to-end both unconfigured and configured. Zero regressions.
 - [x] `move_contracts/` — no `seal_approve` needed here. Real Seal
       integration and its on-chain policy belong to Omo-Koda2
       (`seal_bridge.rs` gates that project's own TEE memory envelope) —
@@ -66,11 +75,25 @@ word:
 
 ## Nautilus (verifiable off-chain compute)
 
-- [ ] No current code path claims to do off-chain TEE-verified compute, so
-      there's no existing fake to replace. Open question for the owner:
-      where in OSOVM would Nautilus actually apply — VeilSim scoring
-      (F1/PoSim validation happening off-chain, then verified on-chain)?
-      Needs a scoping decision before any implementation starts.
+- [x] Wired to VeilSim F1/PoSim scoring, the use case identified above.
+      `src/nautilus_attestation.jl` is a direct port of Omo-Koda2's real
+      `nautilus_integration::attestation` pattern (same honesty level):
+      `verify_quote` checks a `TeeQuote`'s `code_measurement` against the
+      real, live SHA-256 of `veilsim_engine.jl` on disk
+      (`code_measurement_of_engine()`, recomputed at call time, not
+      cached) and derives a key from the quote's own fields. Honest about
+      what it verifies: binds a result to a specific claimed engine build,
+      but does not yet verify a real hardware attestation signature
+      (SGX/TDX/Nitro), since no real enclave is deployed anywhere in this
+      ecosystem — same documented limitation as Omo-Koda2's own
+      implementation. `VeilSimEngine.compute_f1_attested(sim, sim_id,
+      tee_quote)` wraps the existing, untouched `compute_f1` with this
+      attestation; `F1Attestation.verified` is honest (false, never
+      thrown, on a mismatched/stale quote). Verified end-to-end: a quote
+      built from the real current engine measurement attests `verified=
+      true`; a wrong measurement honestly reports `verified=false`.
+      `test/nautilus_attestation_test.jl`: 9/9. Zero regressions on the
+      full test suite.
 
 ## Verification standard for each item above
 

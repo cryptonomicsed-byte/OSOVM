@@ -13,10 +13,14 @@ using Statistics
 include("veilsim_scorer.jl")
 using .VeilSimScorer
 
+include("nautilus_attestation.jl")
+using .NautilusAttestation: TeeQuote, F1Attestation, attest_f1_score
+
 export SimulationState, Entity, VeilInstance, CollisionPair
 export initialize_simulation, step_simulation, batch_simulation
-export compute_metrics, compute_f1, anchor_simulation
+export compute_metrics, compute_f1, compute_f1_attested, anchor_simulation
 export vec3_mag, vec3_dot, vec3_sub, vec3_add, vec3_scale
+export TeeQuote, F1Attestation
 
 # ============================================================================
 # 1. DATA STRUCTURES
@@ -894,6 +898,22 @@ function compute_f1(sim::SimulationState)::Float64
     p = total_tp + total_fp > 0 ? total_tp / (total_tp + total_fp) : 0.0
     r = total_tp + total_fn > 0 ? total_tp / (total_tp + total_fn) : 0.0
     p + r > 0 ? 2.0 * (p * r) / (p + r) : 0.0
+end
+
+"""
+    compute_f1_attested(sim, sim_id, tee_quote) -> (f1_score, F1Attestation)
+
+Same F1 as `compute_f1`, plus a Nautilus attestation (see
+nautilus_attestation.jl) binding the score to the specific engine build
+`tee_quote` claims ran it. Verifiable off-chain compute for VeilSim's
+scoring, the real use case identified in
+SEAL_WALRUS_NAUTILUS_MIGRATION.md. `attestation.verified` is honest --
+false (never thrown) if the quote's code measurement doesn't match this
+engine file as it exists on disk right now."""
+function compute_f1_attested(sim::SimulationState, sim_id::AbstractString, tee_quote::TeeQuote)::Tuple{Float64, F1Attestation}
+    f1 = compute_f1(sim)
+    attestation = attest_f1_score(sim_id, f1, tee_quote)
+    (f1, attestation)
 end
 # ============================================================================
 # 10. BLOCKCHAIN ANCHORING

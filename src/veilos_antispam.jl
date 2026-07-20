@@ -16,7 +16,10 @@ using .Veils777
 using .VeilIndex
 using .VeilSimScorer
 using .AseMinting
-using Dates, SHA
+using Dates, SHA, Random
+
+include("seal_bridge.jl")
+using .SealBridge
 
 export SimulationRequest, SimulationReceipt, WitnessVote,
        validate_simulation, create_receipt, calculate_novelty_bonus,
@@ -98,9 +101,16 @@ struct SimulationReceipt
     
     # Proof
     hash::String
-    seal::String
+    seal::String                # Layer 1: SHA-256 tamper-evidence commitment
+    seal_dek_fingerprint::String
+                                 # Layer 2 ("dual seal"): SHA-256 fingerprint of
+                                 # a real DEK fetched from Sui Seal's
+                                 # decentralized key servers (see
+                                 # seal_bridge.jl). Empty string when SEAL_*
+                                 # env vars aren't configured (fail-open) --
+                                 # never a fake value.
     law::String  # "WRITTEN"
-    
+
     # Gate progress
     current_gate::String
     sims_in_gate::Int
@@ -413,14 +423,28 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
     gross = (base_mint + bonus_mint) * replication
     tithe, net = apply_tithe(gross)
     
-    # Generate seal
+    # Layer 1: SHA-256 tamper-evidence commitment (always present)
     seal_data = "Ọbàtálá seals the 777 Veils and the first mint"
     seal = bytes2hex(sha256(seal_data))
-    
+
+    # Layer 2 ("dual seal"): real Sui Seal consultation, when configured.
+    # Fail-open: unconfigured -> empty string; misconfigured (throws) ->
+    # logged and left empty, never faked as if it succeeded.
+    seal_dek_fingerprint = try
+        fp = SealBridge.try_seal_fingerprint()
+        fp === nothing ? "" : fp
+    catch e
+        @warn "Seal fetch configured but failed; falling back to SHA-256-only commitment" exception=e
+        ""
+    end
+
     # Determine current gate
     current_gate = get_current_gate(request.citizen_id)
     sims_in_gate = count_sims_in_gate(request.citizen_id, current_gate)
-    gate_target = PILGRIMAGE_GATES[current_gate][3]
+    # PILGRIMAGE_GATES is an ordered Vector{Pair} (line 513 relies on that
+    # ordering), not a Dict -- indexing it directly by a String key threw
+    # ArgumentError. Look it up via a Dict view instead.
+    gate_target = Dict(PILGRIMAGE_GATES)[current_gate].ase_target
     
     receipt = SimulationReceipt(
         sim_id,
@@ -445,6 +469,7 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
         
         composition_hash,
         seal,
+        seal_dek_fingerprint,
         "WRITTEN",
         
         current_gate,
