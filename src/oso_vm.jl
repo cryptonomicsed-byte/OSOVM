@@ -198,8 +198,18 @@ Execute a single instruction
 """
 
 function is_critical(opcode::UInt8)::Bool
-    # Sui-state dependent opcodes
-    return opcode in [0x11, 0x1f, 0x20, 0x21, 0x22, 0x30, 0x31, 0x32, 0x33, 0x34]
+    # Locally-executable opcodes -- everything else offloads to the
+    # (currently stub) ase-vault via call_ase_vault(). This list was
+    # originally missing 13 opcodes (0x12,0x18,0x19,0x23,0x27,0x28,0x29,
+    # 0x2a,0x35,0x37,0x38,0xa0,0xa6) that already had real elseif branches
+    # written below -- they were unreachable dead code, silently replaced
+    # by the fake stub at runtime. Also adds 4 opcodes (0x2b,0x3c,0x3d,0x3e)
+    # whose real handlers were missing entirely and are implemented below.
+    return opcode in [
+        0x11, 0x12, 0x18, 0x19, 0x1f, 0x20, 0x21, 0x22, 0x23,
+        0x27, 0x28, 0x29, 0x2a, 0x2b, 0x30, 0x31, 0x32, 0x33, 0x34,
+        0x35, 0x37, 0x38, 0x3c, 0x3d, 0x3e, 0xa0, 0xa6,
+    ]
 end
 
 function call_ase_vault(instr::OsoCompiler.Instruction)::Any
@@ -321,7 +331,70 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         event = Dict(:name => event_name, :data => event_data, :block => vm.block_height)
         push!(vm.events, event)
         return Dict("event_emitted" => event_name)
-        
+
+    elseif opcode == 0x2b  # GENESIS_FLAW_TOKEN -- Block 0 only: "ASHE" (the
+        # deliberate misspelling) mints 1.0 Àṣẹ; forever rejected after
+        # block 0. Genesis-used state is tracked via vm.events (this
+        # VMState has no metadata dict) rather than adding a new struct
+        # field, which would require updating every create_vm() call site.
+        token = get(args, :token, "ASHE")
+        already_used = any(e -> get(e, :name, "") == "GenesisFlawUsed", vm.events)
+        if vm.block_height == 0 && token == "ASHE" && !already_used
+            vm.ase_balance[vm.current_sender] = get(vm.ase_balance, vm.current_sender, 0.0) + 1.0
+            push!(vm.events, Dict(:name => "GenesisFlawUsed", :data => Dict("sender" => vm.current_sender), :block => vm.block_height))
+            return Dict("genesis" => true, "token_minted" => "Àṣẹ", "amount" => 1.0, "block" => vm.block_height, "original_token" => "ASHE")
+        else
+            reason = vm.block_height != 0 ? "flaw_denied_post_genesis" :
+                     token != "ASHE" ? "wrong_token" : "flaw_already_used"
+            return Dict("genesis" => false, "error" => reason, "rejected_token" => token, "block" => vm.block_height)
+        end
+
+    elseif opcode == 0x3c  # AGENT_CONVERT -- burn Àṣẹ, emit a Dopamine
+        # signal proportional to the amount burned (real burn/bookkeeping;
+        # "Dopamine" here is a returned signal value, not a separately
+        # tracked ledger -- no such ledger exists in this VMState).
+        ase_amount = get(args, :ase_amount, 0.0)
+        balance = get(vm.ase_balance, vm.current_sender, 0.0)
+        if balance < ase_amount
+            return Dict("success" => false, "error" => "insufficient_balance", "balance" => balance)
+        end
+        vm.ase_balance[vm.current_sender] = balance - ase_amount
+        dopamine_signal = ase_amount * 1000.0  # conversion rate: 1 Àṣẹ -> 1000 Dopamine signal units
+        push!(vm.events, Dict(:name => "AgentConvert", :data => Dict("sender" => vm.current_sender, "ase_burned" => ase_amount), :block => vm.block_height))
+        return Dict("success" => true, "ase_burned" => ase_amount, "dopamine_signal" => dopamine_signal)
+
+    elseif opcode == 0x3d  # JOB_PAYMENT -- 10% creator, 5% burn, 85% agent
+        # conversion, per the opcode's own documented split.
+        total_ase = get(args, :total_ase, 0.0)
+        creator_address = get(args, :creator_address, "")
+        balance = get(vm.ase_balance, vm.current_sender, 0.0)
+        if balance < total_ase
+            return Dict("success" => false, "error" => "insufficient_balance", "balance" => balance)
+        end
+        creator_share = total_ase * 0.10
+        burn_share = total_ase * 0.05
+        agent_share = total_ase * 0.85
+        vm.ase_balance[vm.current_sender] = balance - total_ase
+        if !isempty(creator_address)
+            vm.ase_balance[creator_address] = get(vm.ase_balance, creator_address, 0.0) + creator_share
+        end
+        push!(vm.events, Dict(:name => "JobPayment", :data => Dict("sender" => vm.current_sender, "total" => total_ase), :block => vm.block_height))
+        return Dict("success" => true, "creator_share" => creator_share, "burn_share" => burn_share, "agent_conversion_share" => agent_share)
+
+    elseif opcode == 0x3e  # AGENT_BIRTH -- lock 10 Àṣẹ, emit the documented
+        # 86B Dopamine / 86M Synapse endowment (returned values -- no
+        # separate dopamine/synapse ledger exists in this VMState to
+        # credit them into; same honest-signal pattern as AGENT_CONVERT).
+        agent_id = get(args, :agent_id, "")
+        birth_fee = 10.0
+        balance = get(vm.ase_balance, vm.current_sender, 0.0)
+        if balance < birth_fee
+            return Dict("success" => false, "error" => "insufficient_balance_for_birth", "required" => birth_fee, "balance" => balance)
+        end
+        vm.ase_balance[vm.current_sender] = balance - birth_fee
+        push!(vm.events, Dict(:name => "AgentBirth", :data => Dict("sender" => vm.current_sender, "agent_id" => agent_id), :block => vm.block_height))
+        return Dict("success" => true, "agent_id" => agent_id, "ase_locked" => birth_fee, "dopamine_endowment" => 86_000_000_000.0, "synapse_endowment" => 86_000_000.0)
+
     # 1440 Inheritance Wallet Opcodes (Sacred Governance)
     elseif opcode == 0x30  # CANDIDATE_APPLY
         wallet_id = UInt16(get(args, :walletId, 0))

@@ -13,7 +13,9 @@ module TechGnosVeilCompiler
 export VeilDirective, VeilCompose, VeilScore, VeilIf, parse_veil_directive
 
 include("opcodes_veil.jl")
+include("veils_777.jl")
 using .OpcodeVeil
+using .Veils777
 
 # ============================================================================
 # AST NODE TYPES
@@ -222,9 +224,9 @@ function tokenize_veil(source::String)::Vector{VeilToken}
         end
         
         # Identifiers and symbols
-        if isalpha(source[i]) || source[i] in ('_',)
+        if isletter(source[i]) || source[i] in ('_',)
             j = i
-            while j <= length(source) && (isalnum(source[j]) || source[j] == '_')
+            while j <= length(source) && (isletter(source[j]) || isdigit(source[j]) || source[j] == '_')
                 j += 1
             end
             id_str = source[i:j-1]
@@ -290,7 +292,27 @@ function parse_veil_directive(source::String)::Union{VeilDirective, VeilCompose,
     
     try
         if match(parser, TK_VEIL)
-            return parse_veil_invocation!(parser)
+            first = parse_veil_invocation!(parser)
+            # Composition: @veil(A) -> @veil(B) -> ... -- tokenized (TK_ARROW)
+            # since tokenize_veil's inception but never dispatched here, so
+            # every composed directive silently fell through to `nothing`
+            # despite VeilCompose/veil_compose_to_ir already existing.
+            if match(parser, TK_ARROW)
+                veil_sequence = Int[first.veil_id]
+                data_flow = Dict{Int, Dict{String, String}}(
+                    first.veil_id => Dict{String, String}(k => string(v) for (k, v) in first.parameters)
+                )
+                while match(parser, TK_ARROW)
+                    advance!(parser)
+                    next_directive = parse_veil_invocation!(parser)
+                    push!(veil_sequence, next_directive.veil_id)
+                    data_flow[next_directive.veil_id] = Dict{String, String}(
+                        k => string(v) for (k, v) in next_directive.parameters
+                    )
+                end
+                return VeilCompose(veil_sequence, data_flow)
+            end
+            return first
         elseif match(parser, TK_VEIL_IF)
             return parse_veil_if!(parser)
         elseif match(parser, TK_VEIL_SCORE)

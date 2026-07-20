@@ -121,16 +121,37 @@ function compile_veil_invocation(node::VeilInvocation)::Vector{UInt8}
     # Parameter count
     push!(bytecode, UInt8(length(node.parameters)))
     
-    # Parameters (simplified: string keys + value on stack)
+    # Parameters: string key + 1-byte type tag + value bytes. Previously
+    # only Float64 values wrote their bytes at all -- Int/String values
+    # wrote their key but SILENTLY DROPPED the value entirely, while the
+    # parameter-count byte above still claimed the original count. That
+    # desynced the byte layout for any invocation mixing value types (no
+    # decoder currently exists to read this bytecode back, so this was
+    # unnoticed data loss rather than a crash). Type tags: 0=Float64,
+    # 1=Int64, 2=String, so a future decoder can round-trip any of the
+    # three value kinds this compiler is ever handed.
     for (key, value) in node.parameters
         # String length + string
         push!(bytecode, UInt8(length(key)))
         append!(bytecode, codeunits(key))
-        
-        # Value (simplified: assume Float64)
+
         if isa(value, Float64)
-            bytes = reinterpret(UInt8, [value])
-            append!(bytecode, bytes)
+            push!(bytecode, UInt8(0))
+            append!(bytecode, reinterpret(UInt8, [value]))
+        elseif isa(value, Integer)
+            push!(bytecode, UInt8(1))
+            append!(bytecode, reinterpret(UInt8, [Int64(value)]))
+        elseif isa(value, AbstractString)
+            push!(bytecode, UInt8(2))
+            push!(bytecode, UInt8(length(value)))
+            append!(bytecode, codeunits(value))
+        else
+            # Unknown value type -- encode as its string representation
+            # rather than silently dropping it.
+            s = string(value)
+            push!(bytecode, UInt8(2))
+            push!(bytecode, UInt8(length(s)))
+            append!(bytecode, codeunits(s))
         end
     end
     

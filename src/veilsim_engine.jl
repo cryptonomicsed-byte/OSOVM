@@ -797,39 +797,6 @@ end
 # 8. METRICS & F1 SCORING
 # ============================================================================
 
-function compute_f1(sim::SimulationState)::Float64
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
-    total_tn = 0
-
-    for entity in sim.entities
-        err = vec3_sub(entity.position, entity.target_position)
-        pos_error = vec3_mag(err)
-        within_tolerance = pos_error <= entity.position_tolerance
-
-        speed = vec3_mag(entity.velocity)
-        settling = within_tolerance && speed < 1.0
-
-        force_mag = vec3_mag(entity.state.total_force)
-        veils_active = force_mag > 1e-6 && !isempty(entity.veils)
-
-        if within_tolerance && (veils_active || settling)
-            total_tp += 1
-        elseif within_tolerance && !veils_active && !settling
-            total_fp += 1
-        elseif !within_tolerance && veils_active
-            total_fn += 1
-        else
-            total_tn += 1
-        end
-    end
-
-    p = total_tp + total_fp > 0 ? total_tp / (total_tp + total_fp) : 0.0
-    r = total_tp + total_fn > 0 ? total_tp / (total_tp + total_fn) : 0.0
-    return p + r > 0 ? 2.0 * (p * r) / (p + r) : 0.0
-end
-
 function compute_metrics(sim::SimulationState)::SimulationMetrics
     total_energy = 0.0
     convergence_sum = 0.0

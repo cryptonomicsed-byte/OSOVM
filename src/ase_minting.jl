@@ -1,7 +1,11 @@
 """
     AseMinting - Àṣẹ token minting and distribution system
-    
-Mints Àṣẹ rewards based on VeilSim F1 scores with 50/25/15/10 distribution.
+
+Mints Àṣẹ rewards based on VeilSim F1 scores with 50/25/10/10/5 distribution
+(treasury/inheritance/embodiment/ubi/bounties). Council (formerly 15%) was
+removed as a fixed wallet — governance seats rotate through the 1440
+Inheritance Wallets instead, so there is no separate standing council
+treasury to fund.
 """
 
 module AseMinting
@@ -9,10 +13,13 @@ module AseMinting
 include("veils_777.jl")
 include("veil_index.jl")
 include("veilsim_scorer.jl")
+include("ase_supply.jl")
 
+using Dates
 using .Veils777
 using .VeilIndex
 using .VeilSimScorer
+using .AseSupply: SupplyState, check_daily_cap, record_mint!
 
 export mint_ase_for_veil, distribute_ase_offering, AseVeilMinted,
        get_ase_balance, transfer_ase, ase_transaction_log, AseWallet
@@ -53,27 +60,43 @@ struct AseVeilMinted
     timestamp::DateTime
     treasury_share::Float64
     inheritance_share::Float64
-    council_share::Float64
-    shrine_share::Float64
+    embodiment_share::Float64
+    ubi_share::Float64
+    bounty_share::Float64
 end
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
 
-"""Distribution ratios for offerings (50/25/15/10)"""
+"""
+Distribution ratios for offerings (50/25/10/10/5):
+  treasury    50% — ecosystem upkeep / operating buffer
+  inheritance 25% — the 1440 Inheritance Wallets
+  embodiment  10% — funds real embodiment (robot hardware/compute); this
+              wallet was previously "shrine" (Ọbàtálá) — repurposed, same
+              10% share, new destination
+  ubi         10% — universal basic income pool
+  bounties     5% — task/bounty funding pool
+
+council (formerly 15%) removed entirely: governance seats now rotate
+through the 1440 Inheritance Wallets, so there is no separate standing
+council wallet to fund. Its 15% was reallocated to ubi (10%) + bounties (5%).
+"""
 const DISTRIBUTION_RATIOS = Dict(
     "treasury" => 0.50,
     "inheritance" => 0.25,
-    "council" => 0.15,
-    "shrine" => 0.10
+    "embodiment" => 0.10,
+    "ubi" => 0.10,
+    "bounties" => 0.05
 )
 
 """Special wallet addresses"""
-const SHRINE_WALLET = "obatala_shrine_0xDEADBEEF"
-const COUNCIL_WALLET = "council_0xCAFEBABE"
+const EMBODIMENT_POOL = "embodiment_pool_0xDEADBEEF"  # formerly obatala_shrine_0xDEADBEEF
 const INHERITANCE_POOL = "inheritance_1440_0x1234ABCD"
 const TREASURY_VAULT = "treasury_vault_0x5678EFGH"
+const UBI_POOL = "ubi_pool_0x9ABCDEF0"
+const BOUNTY_POOL = "bounty_pool_0x0FEDCBA9"
 
 # ============================================================================
 # GLOBAL STATE
@@ -89,14 +112,19 @@ const TRANSACTION_LOG = AseTransaction[]
 const MINTING_LOG = AseVeilMinted[]
 
 """Global Àṣẹ supply tracker"""
-mutable struct AseSupply
+mutable struct AseGlobalSupply
     total_minted::Float64
     total_burned::Float64
     circulation::Float64
     timestamp::DateTime
 end
 
-const GLOBAL_SUPPLY = AseSupply(0.0, 0.0, 0.0, now())
+const GLOBAL_SUPPLY = AseGlobalSupply(0.0, 0.0, 0.0, now())
+
+# Daily-cap enforcement state (ase_supply.jl's DAILY_MINT_CAP, previously
+# defined but never wired to any real minting call site -- check_daily_cap
+# and record_mint! existed as dead code).
+const DAILY_CAP_STATE = SupplyState()
 
 # ============================================================================
 # WALLET MANAGEMENT
@@ -111,10 +139,10 @@ function create_wallet(address::String)::AseWallet
     if haskey(WALLETS, address)
         return WALLETS[address]
     end
-    
+
     wallet = AseWallet(address, 0.0, 0, now(), false)
     WALLETS[address] = wallet
-    
+
     return wallet
 end
 
@@ -157,43 +185,60 @@ end
 # ============================================================================
 
 """
-    mint_ase_for_veil(veil_id::Int, f1_score::Float64, 
+    mint_ase_for_veil(veil_id::Int, f1_score::Float64,
                       wallet_address::String = "") -> AseVeilMinted
 
-Mint Àṣẹ based on veil F1 score with 50/25/15/10 distribution.
+Mint Àṣẹ based on veil F1 score with 50/25/10/10/5 distribution.
 """
-function mint_ase_for_veil(veil_id::Int, f1_score::Float64, 
+function mint_ase_for_veil(veil_id::Int, f1_score::Float64,
                           wallet_address::String = "")::AseVeilMinted
-    
+
     # Verify F1 score is in valid range
     if f1_score < 0.0 || f1_score > 1.0
         error("F1 score must be between 0.0 and 1.0, got $f1_score")
     end
-    
+
     # Check threshold
     if f1_score < VeilSimScorer.F1_THRESHOLD
         # Return zero mint event
         return AseVeilMinted(
             veil_id, f1_score, 0.0, 0.0, 0.0, now(),
-            0.0, 0.0, 0.0, 0.0
+            0.0, 0.0, 0.0, 0.0, 0.0
         )
     end
-    
+
     # Calculate reward
     base_reward = VeilSimScorer.calculate_reward(f1_score)
-    
+
     # Bonus scaling by F1 score (0-1 maps to 0-100%)
     bonus_multiplier = max(0.0, f1_score - VeilSimScorer.F1_THRESHOLD) * 2.0  # 0.1 range -> 0-0.2 bonus
     bonus_reward = base_reward * bonus_multiplier
-    
+
     total_amount = base_reward + bonus_reward
-    
+
+    # Daily mint cap enforcement (AseSupply.DAILY_MINT_CAP, 1440 Àṣẹ/day --
+    # previously defined in ase_supply.jl but never actually wired to any
+    # real minting call site; check_daily_cap/record_mint! were dead code).
+    # Clamp to remaining daily capacity rather than hard-reject, so a veil
+    # that would push the day slightly over the cap still mints whatever
+    # room is left instead of minting nothing.
+    (allowed, remaining) = check_daily_cap(DAILY_CAP_STATE, round(Int, datetime2unix(now())), total_amount)
+    if !allowed
+        total_amount = max(0.0, remaining)
+        base_reward = min(base_reward, total_amount)
+        bonus_reward = max(0.0, total_amount - base_reward)
+    end
+    if total_amount > 0.0
+        record_mint!(DAILY_CAP_STATE, round(Int, datetime2unix(now())), total_amount)
+    end
+
     # Calculate distribution
     treasury_amt = total_amount * DISTRIBUTION_RATIOS["treasury"]
     inheritance_amt = total_amount * DISTRIBUTION_RATIOS["inheritance"]
-    council_amt = total_amount * DISTRIBUTION_RATIOS["council"]
-    shrine_amt = total_amount * DISTRIBUTION_RATIOS["shrine"]
-    
+    embodiment_amt = total_amount * DISTRIBUTION_RATIOS["embodiment"]
+    ubi_amt = total_amount * DISTRIBUTION_RATIOS["ubi"]
+    bounty_amt = total_amount * DISTRIBUTION_RATIOS["bounties"]
+
     # Create minting event
     mint_event = AseVeilMinted(
         veil_id,
@@ -204,21 +249,22 @@ function mint_ase_for_veil(veil_id::Int, f1_score::Float64,
         now(),
         treasury_amt,
         inheritance_amt,
-        council_amt,
-        shrine_amt
+        embodiment_amt,
+        ubi_amt,
+        bounty_amt
     )
-    
+
     # Record minting
     push!(MINTING_LOG, mint_event)
-    
+
     # Distribute Àṣẹ
     distribute_ase_offering(mint_event, wallet_address)
-    
+
     # Update supply
     GLOBAL_SUPPLY.total_minted += total_amount
     GLOBAL_SUPPLY.circulation += total_amount
     GLOBAL_SUPPLY.timestamp = now()
-    
+
     return mint_event
 end
 
@@ -229,40 +275,46 @@ end
 """
     distribute_ase_offering(mint_event::AseVeilMinted, wallet_address::String = "")
 
-Distribute minted Àṣẹ according to 50/25/15/10 ratio.
+Distribute minted Àṣẹ according to 50/25/10/10/5 ratio.
 """
 function distribute_ase_offering(mint_event::AseVeilMinted, wallet_address::String = "")
-    
+
     # Ensure wallets exist
     create_wallet(TREASURY_VAULT)
     create_wallet(INHERITANCE_POOL)
-    create_wallet(COUNCIL_WALLET)
-    create_wallet(SHRINE_WALLET)
-    
+    create_wallet(EMBODIMENT_POOL)
+    create_wallet(UBI_POOL)
+    create_wallet(BOUNTY_POOL)
+
     if !isempty(wallet_address)
         create_wallet(wallet_address)
     end
-    
-    # Treasury (50%)
-    transfer_ase(TREASURY_VAULT, mint_event.treasury_share, 
+
+    # Treasury (50%) — ecosystem upkeep / operating buffer
+    transfer_ase(TREASURY_VAULT, mint_event.treasury_share,
                  "Veil $(mint_event.veil_id) F1 scoring - treasury portion",
                  mint_event.veil_id, mint_event.f1_score)
-    
-    # Inheritance Pool (25%)
+
+    # Inheritance Pool (25%) — the 1440 Inheritance Wallets
     transfer_ase(INHERITANCE_POOL, mint_event.inheritance_share,
                  "Veil $(mint_event.veil_id) F1 scoring - inheritance portion",
                  mint_event.veil_id, mint_event.f1_score)
-    
-    # Council of 12 (15%)
-    transfer_ase(COUNCIL_WALLET, mint_event.council_share,
-                 "Veil $(mint_event.veil_id) F1 scoring - council portion",
+
+    # Embodiment Pool (10%) — funds real embodiment (robot hardware/compute)
+    transfer_ase(EMBODIMENT_POOL, mint_event.embodiment_share,
+                 "Veil $(mint_event.veil_id) F1 scoring - embodiment funding",
                  mint_event.veil_id, mint_event.f1_score)
-    
-    # Ọbàtálá Shrine (10%)
-    transfer_ase(SHRINE_WALLET, mint_event.shrine_share,
-                 "Veil $(mint_event.veil_id) F1 scoring - shrine offering",
+
+    # UBI Pool (10%)
+    transfer_ase(UBI_POOL, mint_event.ubi_share,
+                 "Veil $(mint_event.veil_id) F1 scoring - UBI portion",
                  mint_event.veil_id, mint_event.f1_score)
-    
+
+    # Bounty Pool (5%)
+    transfer_ase(BOUNTY_POOL, mint_event.bounty_share,
+                 "Veil $(mint_event.veil_id) F1 scoring - bounty portion",
+                 mint_event.veil_id, mint_event.f1_score)
+
     # Direct wallet reward (if specified)
     if !isempty(wallet_address)
         # Give wallet a 5% bonus of the base reward
@@ -289,21 +341,21 @@ Transfer Àṣẹ from system pool to wallet.
 function transfer_ase(to_address::String, amount::Float64, reason::String = "",
                      veil_id::Union{Int, Nothing} = nothing,
                      f1_score::Union{Float64, Nothing} = nothing)::AseTransaction
-    
+
     if amount < 0.0
         error("Cannot transfer negative Àṣẹ")
     end
-    
+
     # Get or create wallet
     wallet = create_wallet(to_address)
-    
+
     if wallet.locked
         error("Wallet $to_address is locked")
     end
-    
+
     # Generate transaction ID
-    tx_id = "ASE_$(hash(to_address, time()))_$(length(TRANSACTION_LOG)+1)"
-    
+    tx_id = "ASE_$(hash(to_address, UInt64(round(time()*1000))))_$(length(TRANSACTION_LOG)+1)"
+
     # Create transaction
     tx = AseTransaction(
         tx_id,
@@ -316,17 +368,17 @@ function transfer_ase(to_address::String, amount::Float64, reason::String = "",
         now(),
         true
     )
-    
+
     # Record transaction
     push!(TRANSACTION_LOG, tx)
-    
+
     # Update wallet
     wallet.balance += amount
     wallet.transaction_count += 1
-    
+
     # Emit transaction event
     emit_ase_transaction(tx)
-    
+
     return tx
 end
 
@@ -348,12 +400,12 @@ function emit_ase_transaction(tx::AseTransaction)
         "timestamp" => string(tx.timestamp),
         "confirmed" => tx.confirmed
     )
-    
+
     # Log
     if tx.amount > 0.0
         println("[AseTransferred] $(tx.to): +$(tx.amount) ($(tx.reason))")
     end
-    
+
     return event
 end
 
@@ -400,12 +452,12 @@ function get_wallet_info(address::String)::Dict
     if !haskey(WALLETS, address)
         return Dict("error" => "Wallet $address not found")
     end
-    
+
     wallet = WALLETS[address]
-    
+
     # Get wallet transactions
     wallet_txs = filter(tx -> tx.to == address, TRANSACTION_LOG)
-    
+
     return Dict(
         "address" => address,
         "balance" => wallet.balance,
@@ -426,35 +478,43 @@ end
 """
     distribution_breakdown() -> Dict
 
-Get 50/25/15/10 distribution breakdown.
+Get 50/25/10/10/5 distribution breakdown.
 """
 function distribution_breakdown()::Dict
     total_minted = GLOBAL_SUPPLY.total_minted
-    
+
     return Dict(
         "total_minted" => total_minted,
         "treasury_50" => Dict(
             "percentage" => 50,
             "amount" => total_minted * 0.50,
-            "balance" => get_ase_balance(TREASURY_VAULT)
+            "balance" => get_ase_balance(TREASURY_VAULT),
+            "purpose" => "ecosystem upkeep / operating buffer"
         ),
         "inheritance_25" => Dict(
             "percentage" => 25,
             "amount" => total_minted * 0.25,
             "balance" => get_ase_balance(INHERITANCE_POOL),
-            "wallets_in_pool" => 1440
+            "wallets_in_pool" => 1440,
+            "purpose" => "the 1440 Inheritance Wallets"
         ),
-        "council_15" => Dict(
-            "percentage" => 15,
-            "amount" => total_minted * 0.15,
-            "balance" => get_ase_balance(COUNCIL_WALLET),
-            "council_members" => 12
-        ),
-        "shrine_10" => Dict(
+        "embodiment_10" => Dict(
             "percentage" => 10,
             "amount" => total_minted * 0.10,
-            "balance" => get_ase_balance(SHRINE_WALLET),
-            "shrine" => "Ọbàtálá"
+            "balance" => get_ase_balance(EMBODIMENT_POOL),
+            "purpose" => "real embodiment (robot hardware/compute)"
+        ),
+        "ubi_10" => Dict(
+            "percentage" => 10,
+            "amount" => total_minted * 0.10,
+            "balance" => get_ase_balance(UBI_POOL),
+            "purpose" => "universal basic income"
+        ),
+        "bounties_5" => Dict(
+            "percentage" => 5,
+            "amount" => total_minted * 0.05,
+            "balance" => get_ase_balance(BOUNTY_POOL),
+            "purpose" => "task/bounty funding"
         )
     )
 end

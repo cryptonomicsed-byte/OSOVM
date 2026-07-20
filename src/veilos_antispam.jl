@@ -143,7 +143,7 @@ const REPLICATION_TRACKER = Dict{String, Int}()
 # Initialize witnesses (12 nodes)
 function init_witnesses()
     for i in 1:WITNESS_TOTAL
-        WITNESSES[i] = "witness_$(i)_0x$(hexdigest(sha256("witness_$i")))[1:16]"
+        WITNESSES[i] = "witness_$(i)_0x$(bytes2hex(sha256("witness_$i"))[1:16])"
     end
 end
 
@@ -262,7 +262,7 @@ function request_witness_votes(sim_id::String, citizen_id::String,
         vote = check_f1_threshold(f1_score)
         
         # Create signature (mock)
-        signature = "0x$(hexdigest(sha256("$witness_id:$sim_id:$f1_score")))[1:32]"
+        signature = "0x$(bytes2hex(sha256("$witness_id:$sim_id:$f1_score"))[1:32])"
         
         vote_record = WitnessVote(
             witness_id,
@@ -291,7 +291,9 @@ function verify_witness_quorum(votes::Vector{WitnessVote})::Bool
     end
     
     approved = count(v -> v.vote, votes)
-    return approved >= div(WITNESS_QUORUM, 2)  # 4+ out of 7 need to approve
+    # div(WITNESS_QUORUM, 2) = div(7, 2) = 3 -- that's only a plurality,
+    # not the majority (4+) the comment claimed. +1 makes it a real majority.
+    return approved >= div(WITNESS_QUORUM, 2) + 1  # 4+ out of 7 need to approve
 end
 
 # ============================================================================
@@ -393,10 +395,10 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
                        veil_id::Int)::SimulationReceipt
     
     # Generate sim ID
-    sim_id = "sim-$veil_id-0x$(hexdigest(sha256("$(request.citizen_id)|$(now())|$f1_score")))[1:8]"
+    sim_id = "sim-$veil_id-0x$(bytes2hex(sha256("$(request.citizen_id)|$(now())|$f1_score"))[1:8])"
     
     # Composition hash
-    composition_hash = hexdigest(sha256(string(request.composition)))
+    composition_hash = bytes2hex(sha256(string(request.composition)))
     
     # Get witness votes
     witness_votes = request_witness_votes(sim_id, request.citizen_id, f1_score, request.composition)
@@ -413,7 +415,7 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
     
     # Generate seal
     seal_data = "Ọbàtálá seals the 777 Veils and the first mint"
-    seal = hexdigest(sha256(seal_data))
+    seal = bytes2hex(sha256(seal_data))
     
     # Determine current gate
     current_gate = get_current_gate(request.citizen_id)
