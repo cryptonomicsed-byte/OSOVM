@@ -58,6 +58,11 @@ mutable struct VMState
     has_inherited::Dict{String, Bool}        # Shrine → already inherited?
     # Profiling
     latency_log::Dict{UInt8, Vector{Float64}} # Opcode → [execution_times_ms]
+    # Reentrancy guard: true while execute_instruction's critical dispatch
+    # is running for this vm. Previously NONREENTRANT's guard was a no-op
+    # (`return true` unconditionally, comment admitted "real impl would use
+    # mutex") -- it now reflects real state and a real recursive-call block.
+    in_execution::Bool
 end
 
 function create_vm(; 
@@ -93,7 +98,8 @@ function create_vm(;
         council,
         final_signer,
         Dict{String, Bool}(),
-        Dict{UInt8, Vector{Float64}}()
+        Dict{UInt8, Vector{Float64}}(),
+        false
     )
 end
 
@@ -131,9 +137,12 @@ module FFI
     end
     
     # Rust FFI (safety/guards)
-    function nonreentrant_guard()::Bool
-        # Simplified - real impl would use mutex
-        return true
+    function nonreentrant_guard(vm)::Bool
+        # Reflects vm.in_execution, which execute_instruction now sets/
+        # clears around its real dispatch (see the try/finally there) and
+        # uses to reject genuine recursive re-entry -- no longer a
+        # hardcoded true regardless of actual state.
+        return vm.in_execution
     end
     
     # Move FFI (resource safety)
@@ -257,7 +266,18 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     end
     args = instr.args
     attr = Opcodes.get_attribute(opcode)
-    
+
+    # Real reentrancy guard: reject genuine recursive execute_instruction
+    # calls on the same vm (e.g. an opcode handler calling back into
+    # execute_instruction while one is already running for this vm).
+    # Sequential top-level calls are unaffected -- the lock is always
+    # released in the `finally` below before this function returns.
+    if vm.in_execution
+        return Dict("error" => "reentrant_call_blocked", "success" => false)
+    end
+    vm.in_execution = true
+    try
+
     # Core opcodes (runtime-enforced)
     if opcode == 0x00  # HALT
         vm.halted = true
@@ -338,7 +358,7 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         return Dict("wallet" => wallet, "balance" => get(vm.ase_balance, wallet, 0.0))
         
     elseif opcode == 0x28  # NONREENTRANT
-        guard = FFI.nonreentrant_guard()
+        guard = FFI.nonreentrant_guard(vm)
         return Dict("guarded" => guard)
         
     elseif opcode == 0x29  # REQUIRE
@@ -673,6 +693,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     push!(times, elapsed)
     
     return res
+    finally
+        vm.in_execution = false
+    end
 end
 
 """
