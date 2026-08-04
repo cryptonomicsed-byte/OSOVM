@@ -166,7 +166,7 @@ end
 function parse_attribute(p::Parser)::Instruction
     expect!(p, :ATSYM)
     name_token = expect!(p, :IDENT)
-    attr_name = Symbol(uppercase(name_token.value))
+    attr_name = Symbol(uppercase(replace(name_token.value, r"([a-z])([A-Z])" => s"\1_\2")))
     
     # Get opcode
     opcode = Opcodes.get_opcode(attr_name)
