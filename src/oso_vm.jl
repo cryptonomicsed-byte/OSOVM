@@ -63,6 +63,19 @@ mutable struct VMState
     # (`return true` unconditionally, comment admitted "real impl would use
     # mutex") -- it now reflects real state and a real recursive-call block.
     in_execution::Bool
+    # Universal Work cluster (real stateful tracking, replaces decorative
+    # PROJECT/JOB stubs that previously just echoed args or called
+    # FFI.mock_job with no persisted state or invariants).
+    projects::Dict{String, Dict{Symbol, Any}}
+    castings::Dict{String, Vector{Dict{Symbol, Any}}}   # project_id => [{wallet, role}]
+    jobs::Dict{String, Dict{Symbol, Any}}
+    shifts::Dict{String, Dict{Symbol, Any}}
+    milestones::Dict{String, Dict{Symbol, Any}}
+    deliverables::Dict{String, Dict{Symbol, Any}}
+    timesheets::Dict{String, Dict{Symbol, Any}}
+    invoices::Dict{String, Dict{Symbol, Any}}
+    contracts::Dict{String, Dict{Symbol, Any}}
+    disputes::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -99,7 +112,17 @@ function create_vm(;
         final_signer,
         Dict{String, Bool}(),
         Dict{UInt8, Vector{Float64}}(),
-        false
+        false,
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Vector{Dict{Symbol, Any}}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}(),
+        Dict{String, Dict{Symbol, Any}}()
     )
 end
 
@@ -233,6 +256,10 @@ function is_critical(opcode::UInt8)::Bool
         0x11, 0x12, 0x18, 0x19, 0x1f, 0x20, 0x21, 0x22, 0x23,
         0x27, 0x28, 0x29, 0x2a, 0x2b, 0x30, 0x31, 0x32, 0x33, 0x34,
         0x35, 0x37, 0x38, 0x3c, 0x3d, 0x3e, 0xa0, 0xa6,
+        # Universal Work cluster: real stateful handlers below replace
+        # what were either decorative echoes (PROJECT/JOB, already listed
+        # above) or full offload-to-stub (the other 8, added here).
+        0x17, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x24, 0x25,
     ]
 end
 
@@ -664,17 +691,141 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     elseif opcode == 0x38  # ORIGIN
         return Dict("origin" => vm.current_sender)
         
-    # Expansion attributes (semantic DSL extensions)
+    # Universal Work cluster (real stateful tracking, not decorative)
     elseif opcode == 0x18  # PROJECT
         project_id = get(args, :id, "")
-        sector = get(args, :sector, "")
-        budget = get(args, :budget, 0)
-        return Dict("project" => project_id, "sector" => sector, "budget" => budget)
-        
-    elseif opcode == 0x19  # JOB
-        job_result = FFI.mock_job(args)
-        return job_result
-        
+        isempty(project_id) && return Dict("error" => "project_id required", "success" => false)
+        haskey(vm.projects, project_id) && return Dict("error" => "project already exists: $project_id", "success" => false)
+        budget = Float64(get(args, :budget, 0.0))
+        budget < 0 && return Dict("error" => "budget cannot be negative", "success" => false)
+        vm.projects[project_id] = Dict{Symbol, Any}(
+            :id => project_id, :sector => get(args, :sector, ""),
+            :budget => budget, :creator => vm.current_sender, :status => :open,
+        )
+        return Dict("project" => project_id, "status" => "open", "success" => true)
+
+    elseif opcode == 0x17  # CASTING -- assign a wallet to a role on a project
+        project_id = get(args, :project_id, "")
+        haskey(vm.projects, project_id) || return Dict("error" => "unknown project: $project_id", "success" => false)
+        role = get(args, :role, "")
+        isempty(role) && return Dict("error" => "role required", "success" => false)
+        wallet = get(args, :wallet, vm.current_sender)
+        casting = get!(vm.castings, project_id, Dict{Symbol, Any}[])
+        any(c -> c[:wallet] == wallet && c[:role] == role, casting) &&
+            return Dict("error" => "already cast: $wallet as $role", "success" => false)
+        push!(casting, Dict{Symbol, Any}(:wallet => wallet, :role => role))
+        return Dict("project" => project_id, "wallet" => wallet, "role" => role, "success" => true)
+
+    elseif opcode == 0x19  # JOB -- a task unit under a project
+        project_id = get(args, :project_id, "")
+        haskey(vm.projects, project_id) || return Dict("error" => "unknown project: $project_id", "success" => false)
+        vm.projects[project_id][:status] == :closed &&
+            return Dict("error" => "project closed: $project_id", "success" => false)
+        job_id = get(args, :id, "")
+        isempty(job_id) && return Dict("error" => "job id required", "success" => false)
+        haskey(vm.jobs, job_id) && return Dict("error" => "job already exists: $job_id", "success" => false)
+        reward = Float64(get(args, :reward, 0.0))
+        reward < 0 && return Dict("error" => "reward cannot be negative", "success" => false)
+        vm.jobs[job_id] = Dict{Symbol, Any}(
+            :id => job_id, :project_id => project_id, :reward => reward, :status => :open,
+        )
+        return Dict("job" => job_id, "project_id" => project_id, "status" => "open", "success" => true)
+
+    elseif opcode == 0x1a  # SHIFT -- a logged time block against a job
+        job_id = get(args, :job_id, "")
+        haskey(vm.jobs, job_id) || return Dict("error" => "unknown job: $job_id", "success" => false)
+        start_t = get(args, :start, 0); end_t = get(args, :end, 0)
+        end_t <= start_t && return Dict("error" => "shift end must be after start", "success" => false)
+        shift_id = get(args, :id, "shift-$(length(vm.shifts) + 1)")
+        haskey(vm.shifts, shift_id) && return Dict("error" => "shift already exists: $shift_id", "success" => false)
+        vm.shifts[shift_id] = Dict{Symbol, Any}(
+            :id => shift_id, :job_id => job_id, :worker => get(args, :worker, vm.current_sender),
+            :start => start_t, :end => end_t, :hours => (end_t - start_t) / 3600.0,
+        )
+        return Dict("shift" => shift_id, "hours" => vm.shifts[shift_id][:hours], "success" => true)
+
+    elseif opcode == 0x1b  # MILESTONE -- completion marker on a project, monotonic 0..100
+        project_id = get(args, :project_id, "")
+        haskey(vm.projects, project_id) || return Dict("error" => "unknown project: $project_id", "success" => false)
+        pct = Float64(get(args, :percent, 0.0))
+        (pct < 0 || pct > 100) && return Dict("error" => "percent must be 0..100", "success" => false)
+        prior = get(vm.projects[project_id], :milestone_pct, 0.0)
+        pct < prior && return Dict("error" => "milestone cannot regress ($prior -> $pct)", "success" => false)
+        vm.projects[project_id][:milestone_pct] = pct
+        milestone_id = get(args, :id, "milestone-$(length(vm.milestones) + 1)")
+        vm.milestones[milestone_id] = Dict{Symbol, Any}(:id => milestone_id, :project_id => project_id, :percent => pct)
+        pct == 100.0 && (vm.projects[project_id][:status] = :closed)
+        return Dict("milestone" => milestone_id, "percent" => pct, "success" => true)
+
+    elseif opcode == 0x1c  # DELIVERABLE -- output artifact tied to a job
+        job_id = get(args, :job_id, "")
+        haskey(vm.jobs, job_id) || return Dict("error" => "unknown job: $job_id", "success" => false)
+        artifact_hash = get(args, :hash, "")
+        isempty(artifact_hash) && return Dict("error" => "artifact hash required", "success" => false)
+        deliverable_id = get(args, :id, "deliverable-$(length(vm.deliverables) + 1)")
+        vm.deliverables[deliverable_id] = Dict{Symbol, Any}(
+            :id => deliverable_id, :job_id => job_id, :hash => artifact_hash,
+        )
+        vm.jobs[job_id][:status] = :delivered
+        return Dict("deliverable" => deliverable_id, "job" => job_id, "success" => true)
+
+    elseif opcode == 0x1d  # TIMESHEET -- aggregate hours from real shifts
+        job_id = get(args, :job_id, "")
+        worker = get(args, :worker, vm.current_sender)
+        matching = [s for s in values(vm.shifts) if s[:job_id] == job_id && s[:worker] == worker]
+        isempty(matching) && return Dict("error" => "no shifts logged for worker on job $job_id", "success" => false)
+        total_hours = sum(s[:hours] for s in matching)
+        timesheet_id = get(args, :id, "timesheet-$(length(vm.timesheets) + 1)")
+        vm.timesheets[timesheet_id] = Dict{Symbol, Any}(
+            :id => timesheet_id, :job_id => job_id, :worker => worker,
+            :hours => total_hours, :shift_count => length(matching),
+        )
+        return Dict("timesheet" => timesheet_id, "hours" => total_hours, "success" => true)
+
+    elseif opcode == 0x1e  # INVOICE -- payment request derived from a real timesheet
+        timesheet_id = get(args, :timesheet_id, "")
+        haskey(vm.timesheets, timesheet_id) || return Dict("error" => "unknown timesheet: $timesheet_id", "success" => false)
+        rate = Float64(get(args, :rate, 0.0))
+        rate < 0 && return Dict("error" => "rate cannot be negative", "success" => false)
+        amount = vm.timesheets[timesheet_id][:hours] * rate
+        invoice_id = get(args, :id, "invoice-$(length(vm.invoices) + 1)")
+        vm.invoices[invoice_id] = Dict{Symbol, Any}(
+            :id => invoice_id, :timesheet_id => timesheet_id, :rate => rate,
+            :amount => amount, :status => :pending, :disputed => false,
+        )
+        return Dict("invoice" => invoice_id, "amount" => amount, "success" => true)
+
+    elseif opcode == 0x24  # CONTRACT -- binding agreement between two parties
+        party_a = get(args, :party_a, vm.current_sender)
+        party_b = get(args, :party_b, "")
+        isempty(party_b) && return Dict("error" => "party_b required", "success" => false)
+        contract_id = get(args, :id, "contract-$(length(vm.contracts) + 1)")
+        haskey(vm.contracts, contract_id) && return Dict("error" => "contract already exists: $contract_id", "success" => false)
+        vm.contracts[contract_id] = Dict{Symbol, Any}(
+            :id => contract_id, :party_a => party_a, :party_b => party_b,
+            :terms => get(args, :terms, ""), :status => :active,
+        )
+        return Dict("contract" => contract_id, "status" => "active", "success" => true)
+
+    elseif opcode == 0x25  # DISPUTE -- raise a conflict on a contract or invoice, freezes payment
+        target_type = get(args, :target_type, "")
+        target_id = get(args, :target_id, "")
+        if target_type == "invoice"
+            haskey(vm.invoices, target_id) || return Dict("error" => "unknown invoice: $target_id", "success" => false)
+            vm.invoices[target_id][:disputed] = true
+        elseif target_type == "contract"
+            haskey(vm.contracts, target_id) || return Dict("error" => "unknown contract: $target_id", "success" => false)
+            vm.contracts[target_id][:status] = :disputed
+        else
+            return Dict("error" => "target_type must be invoice or contract", "success" => false)
+        end
+        dispute_id = get(args, :id, "dispute-$(length(vm.disputes) + 1)")
+        vm.disputes[dispute_id] = Dict{Symbol, Any}(
+            :id => dispute_id, :target_type => target_type, :target_id => target_id,
+            :reason => get(args, :reason, ""), :status => :open,
+        )
+        return Dict("dispute" => dispute_id, "target" => target_id, "success" => true)
+
     # Òrìṣà spiritual attributes (invocations)
     elseif opcode == 0xa0  # ORISA_OBATALA
         return Dict("orisa" => "Ọbàtálá", "aspect" => "purity", "ase" => 1.0)
