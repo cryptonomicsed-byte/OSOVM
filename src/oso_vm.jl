@@ -76,6 +76,25 @@ mutable struct VMState
     invoices::Dict{String, Dict{Symbol, Any}}
     contracts::Dict{String, Dict{Symbol, Any}}
     disputes::Dict{String, Dict{Symbol, Any}}
+    # Quadrinity Government cluster (real stateful tracking, replaces
+    # call_ase_vault() offload for PROPOSAL/VOTE/DELEGATION/QUORUM/
+    # EXECUTION/VETO/AMENDMENT/IMPEACHMENT/ELECTION/TERM/CABINET/
+    # COMMITTEE/REFERENDUM/CONSTITUTION/LAW/COURT/VERDICT/APPEAL/
+    # PARDON/SANCTION). Ballots (proposals, elections, referendums) share
+    # one votes table keyed by ballot_id so quorum/tally logic is uniform.
+    proposals::Dict{String, Dict{Symbol, Any}}
+    votes::Dict{String, Dict{String, Any}}         # ballot_id => voter => choice
+    delegations::Dict{String, String}              # delegator => delegate
+    elections::Dict{String, Dict{Symbol, Any}}
+    gov_terms::Dict{String, Dict{Symbol, Any}}
+    cabinet::Dict{String, String}                  # official => role
+    committees::Dict{String, Dict{Symbol, Any}}
+    referendums::Dict{String, Dict{Symbol, Any}}
+    constitution::Dict{Symbol, Any}                # {} until CONSTITUTION sets it once
+    laws::Dict{String, Dict{Symbol, Any}}
+    courts::Dict{String, Dict{Symbol, Any}}
+    verdicts::Dict{String, Dict{Symbol, Any}}
+    sanctions::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -122,7 +141,21 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),
         Dict{String, Dict{Symbol, Any}}(),
         Dict{String, Dict{Symbol, Any}}(),
-        Dict{String, Dict{Symbol, Any}}()
+        Dict{String, Dict{Symbol, Any}}(),
+        # Quadrinity Government cluster
+        Dict{String, Dict{Symbol, Any}}(),   # proposals
+        Dict{String, Dict{String, Any}}(),   # votes
+        Dict{String, String}(),              # delegations
+        Dict{String, Dict{Symbol, Any}}(),   # elections
+        Dict{String, Dict{Symbol, Any}}(),   # gov_terms
+        Dict{String, String}(),              # cabinet
+        Dict{String, Dict{Symbol, Any}}(),   # committees
+        Dict{String, Dict{Symbol, Any}}(),   # referendums
+        Dict{Symbol, Any}(),                 # constitution
+        Dict{String, Dict{Symbol, Any}}(),   # laws
+        Dict{String, Dict{Symbol, Any}}(),   # courts
+        Dict{String, Dict{Symbol, Any}}(),   # verdicts
+        Dict{String, Dict{Symbol, Any}}()    # sanctions
     )
 end
 
@@ -260,6 +293,10 @@ function is_critical(opcode::UInt8)::Bool
         # what were either decorative echoes (PROJECT/JOB, already listed
         # above) or full offload-to-stub (the other 8, added here).
         0x17, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x24, 0x25,
+        # Quadrinity Government cluster: real stateful handlers below
+        # replace call_ase_vault() offload for all 20 opcodes 0x40-0x53.
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+        0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53,
     ]
 end
 
@@ -274,6 +311,281 @@ function call_ase_vault(instr::OsoCompiler.Instruction)::Any
         return Dict("error" => "ase-vault unreachable", "details" => string(e))
     end
 end
+
+# Quadrinity Government cluster (real stateful tracking, not decorative).
+# Extracted into its own function -- inlining these 20 branches into
+# execute_instruction pushed that function to ~900 lines / 50+ elseif
+# branches, which made a single julia invocation of the test suite hang
+# mid-compile (LLVM SLP-vectorizer codegen pass, confirmed via SIGTERM
+# backtrace during `timeout 90 julia test/quadrinity_gov_test.jl` -- not
+# an infinite loop in the test itself). Splitting clusters into their own
+# functions keeps each function's codegen tractable; behavior unchanged.
+function handle_quadrinity_government_1(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x40  # PROPOSAL -- governance motion
+        proposal_id = get(args, :id, "")
+        isempty(proposal_id) && return Dict("error" => "proposal id required", "success" => false)
+        haskey(vm.proposals, proposal_id) && return Dict("error" => "proposal already exists: $proposal_id", "success" => false)
+        vm.proposals[proposal_id] = Dict{Symbol, Any}(
+            :id => proposal_id, :title => get(args, :title, ""), :proposer => vm.current_sender,
+            :status => :open,
+        )
+        return Dict("proposal" => proposal_id, "status" => "open", "success" => true)
+
+    elseif opcode == 0x41  # VOTE -- cast a ballot on a proposal/election/referendum
+        ballot_id = get(args, :ballot_id, "")
+        is_known = haskey(vm.proposals, ballot_id) || haskey(vm.elections, ballot_id) || haskey(vm.referendums, ballot_id)
+        is_known || return Dict("error" => "unknown ballot: $ballot_id", "success" => false)
+        choice = get(args, :choice, "")
+        isempty(choice) && return Dict("error" => "choice required", "success" => false)
+        voter = get(args, :voter, vm.current_sender)
+        haskey(vm.delegations, voter) && return Dict("error" => "voter has delegated, cannot vote directly: $voter", "success" => false)
+        ballot = get!(vm.votes, ballot_id, Dict{String, Any}())
+        haskey(ballot, voter) && return Dict("error" => "already voted: $voter on $ballot_id", "success" => false)
+        ballot[voter] = choice
+        return Dict("ballot" => ballot_id, "voter" => voter, "choice" => choice, "success" => true)
+
+    elseif opcode == 0x42  # DELEGATION -- proxy voting
+        delegator = get(args, :delegator, vm.current_sender)
+        delegate = get(args, :delegate, "")
+        isempty(delegate) && return Dict("error" => "delegate required", "success" => false)
+        delegator == delegate && return Dict("error" => "cannot delegate to self", "success" => false)
+        haskey(vm.delegations, delegator) && return Dict("error" => "already delegated: $delegator", "success" => false)
+        vm.delegations[delegator] = delegate
+        return Dict("delegator" => delegator, "delegate" => delegate, "success" => true)
+
+    elseif opcode == 0x43  # QUORUM -- check whether a ballot has reached quorum
+        ballot_id = get(args, :ballot_id, "")
+        haskey(vm.proposals, ballot_id) || haskey(vm.elections, ballot_id) || haskey(vm.referendums, ballot_id) ||
+            return Dict("error" => "unknown ballot: $ballot_id", "success" => false)
+        threshold = Float64(get(args, :threshold, 0.5))
+        (threshold <= 0.0 || threshold > 1.0) && return Dict("error" => "threshold must be in (0,1]", "success" => false)
+        council_size = max(length(vm.council), 1)
+        cast_votes = length(get(vm.votes, ballot_id, Dict{String, Any}()))
+        met = cast_votes >= ceil(Int, council_size * threshold)
+        if haskey(vm.proposals, ballot_id)
+            vm.proposals[ballot_id][:quorum_met] = met
+        end
+        return Dict("ballot" => ballot_id, "quorum_met" => met, "votes_cast" => cast_votes, "success" => true)
+
+    elseif opcode == 0x44  # EXECUTION -- enact a proposal that has quorum and a yes majority
+        proposal_id = get(args, :proposal_id, "")
+        haskey(vm.proposals, proposal_id) || return Dict("error" => "unknown proposal: $proposal_id", "success" => false)
+        p = vm.proposals[proposal_id]
+        p[:status] == :executed && return Dict("error" => "already executed: $proposal_id", "success" => false)
+        p[:status] == :vetoed && return Dict("error" => "vetoed, cannot execute: $proposal_id", "success" => false)
+        get(p, :quorum_met, false) || return Dict("error" => "quorum not met: $proposal_id", "success" => false)
+        ballot = get(vm.votes, proposal_id, Dict{String, Any}())
+        yes = sum(v == "yes" for v in values(ballot); init=0); no = sum(v == "no" for v in values(ballot); init=0)
+        yes > no || return Dict("error" => "no majority: yes=$yes no=$no", "success" => false)
+        p[:status] = :executed
+        return Dict("proposal" => proposal_id, "status" => "executed", "yes" => yes, "no" => no, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x40-0x44", "success" => false)
+    end
+end
+
+function handle_quadrinity_government_2(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x45  # VETO -- final_signer overrides a proposal before/after execution
+        proposal_id = get(args, :proposal_id, "")
+        haskey(vm.proposals, proposal_id) || return Dict("error" => "unknown proposal: $proposal_id", "success" => false)
+        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may veto", "success" => false)
+        vm.proposals[proposal_id][:status] == :vetoed && return Dict("error" => "already vetoed: $proposal_id", "success" => false)
+        vm.proposals[proposal_id][:status] = :vetoed
+        return Dict("proposal" => proposal_id, "status" => "vetoed", "success" => true)
+
+    elseif opcode == 0x46  # AMENDMENT -- modify an enacted law, requires an executed proposal
+        law_id = get(args, :law_id, "")
+        haskey(vm.laws, law_id) || return Dict("error" => "unknown law: $law_id", "success" => false)
+        proposal_id = get(args, :proposal_id, "")
+        haskey(vm.proposals, proposal_id) && vm.proposals[proposal_id][:status] == :executed ||
+            return Dict("error" => "amendment requires an executed proposal", "success" => false)
+        new_text = get(args, :text, "")
+        isempty(new_text) && return Dict("error" => "amendment text required", "success" => false)
+        vm.laws[law_id][:text] = new_text
+        vm.laws[law_id][:amended_by] = proposal_id
+        return Dict("law" => law_id, "status" => "amended", "success" => true)
+
+    elseif opcode == 0x47  # IMPEACHMENT -- remove an official, requires an executed proposal
+        official = get(args, :official, "")
+        haskey(vm.cabinet, official) || return Dict("error" => "not a sitting official: $official", "success" => false)
+        proposal_id = get(args, :proposal_id, "")
+        haskey(vm.proposals, proposal_id) && vm.proposals[proposal_id][:status] == :executed ||
+            return Dict("error" => "impeachment requires an executed proposal", "success" => false)
+        delete!(vm.cabinet, official)
+        return Dict("official" => official, "status" => "removed", "success" => true)
+
+    elseif opcode == 0x48  # ELECTION -- open or close leadership selection
+        election_id = get(args, :id, "")
+        isempty(election_id) && return Dict("error" => "election id required", "success" => false)
+        action = get(args, :action, "open")
+        if action == "open"
+            haskey(vm.elections, election_id) && return Dict("error" => "election already exists: $election_id", "success" => false)
+            candidates = get(args, :candidates, String[])
+            isempty(candidates) && return Dict("error" => "candidates required", "success" => false)
+            vm.elections[election_id] = Dict{Symbol, Any}(:id => election_id, :candidates => candidates, :status => :open)
+            return Dict("election" => election_id, "status" => "open", "success" => true)
+        elseif action == "close"
+            haskey(vm.elections, election_id) || return Dict("error" => "unknown election: $election_id", "success" => false)
+            e = vm.elections[election_id]
+            e[:status] == :closed && return Dict("error" => "already closed: $election_id", "success" => false)
+            ballot = get(vm.votes, election_id, Dict{String, Any}())
+            isempty(ballot) && return Dict("error" => "no votes cast", "success" => false)
+            tally = Dict{String, Int}()
+            for choice in values(ballot)
+                tally[choice] = get(tally, choice, 0) + 1
+            end
+            winner = argmax(tally)
+            e[:status] = :closed
+            e[:winner] = winner
+            return Dict("election" => election_id, "winner" => winner, "status" => "closed", "success" => true)
+        else
+            return Dict("error" => "action must be open or close", "success" => false)
+        end
+
+    elseif opcode == 0x49  # TERM -- an official's service period
+        term_id = get(args, :id, "")
+        isempty(term_id) && return Dict("error" => "term id required", "success" => false)
+        haskey(vm.gov_terms, term_id) && return Dict("error" => "term already exists: $term_id", "success" => false)
+        start_t = get(args, :start, 0); end_t = get(args, :end, 0)
+        end_t <= start_t && return Dict("error" => "term end must be after start", "success" => false)
+        vm.gov_terms[term_id] = Dict{Symbol, Any}(
+            :id => term_id, :official => get(args, :official, ""), :start => start_t, :end => end_t,
+        )
+        return Dict("term" => term_id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x45-0x49", "success" => false)
+    end
+end
+
+function handle_quadrinity_government_3(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x4a  # CABINET -- appoint an official to the executive council
+        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may appoint cabinet", "success" => false)
+        official = get(args, :official, "")
+        isempty(official) && return Dict("error" => "official required", "success" => false)
+        haskey(vm.cabinet, official) && return Dict("error" => "already in cabinet: $official", "success" => false)
+        role = get(args, :role, "")
+        isempty(role) && return Dict("error" => "role required", "success" => false)
+        vm.cabinet[official] = role
+        return Dict("official" => official, "role" => role, "success" => true)
+
+    elseif opcode == 0x4b  # COMMITTEE -- form a subgroup
+        committee_id = get(args, :id, "")
+        isempty(committee_id) && return Dict("error" => "committee id required", "success" => false)
+        haskey(vm.committees, committee_id) && return Dict("error" => "committee already exists: $committee_id", "success" => false)
+        members = get(args, :members, String[])
+        isempty(members) && return Dict("error" => "members required", "success" => false)
+        vm.committees[committee_id] = Dict{Symbol, Any}(
+            :id => committee_id, :members => members, :purpose => get(args, :purpose, ""),
+        )
+        return Dict("committee" => committee_id, "success" => true)
+
+    elseif opcode == 0x4c  # REFERENDUM -- open direct vote (a ballot, like PROPOSAL but public)
+        referendum_id = get(args, :id, "")
+        isempty(referendum_id) && return Dict("error" => "referendum id required", "success" => false)
+        haskey(vm.referendums, referendum_id) && return Dict("error" => "referendum already exists: $referendum_id", "success" => false)
+        question = get(args, :question, "")
+        isempty(question) && return Dict("error" => "question required", "success" => false)
+        vm.referendums[referendum_id] = Dict{Symbol, Any}(:id => referendum_id, :question => question, :status => :open)
+        return Dict("referendum" => referendum_id, "status" => "open", "success" => true)
+
+    elseif opcode == 0x4d  # CONSTITUTION -- founding document, immutable once set
+        !isempty(vm.constitution) && return Dict("error" => "constitution already set, immutable", "success" => false)
+        text = get(args, :text, "")
+        isempty(text) && return Dict("error" => "constitution text required", "success" => false)
+        vm.constitution[:text] = text
+        vm.constitution[:ratified_by] = vm.current_sender
+        return Dict("status" => "ratified", "success" => true)
+
+    elseif opcode == 0x4e  # LAW -- enacted rule, requires an executed proposal
+        law_id = get(args, :id, "")
+        isempty(law_id) && return Dict("error" => "law id required", "success" => false)
+        haskey(vm.laws, law_id) && return Dict("error" => "law already exists: $law_id", "success" => false)
+        proposal_id = get(args, :proposal_id, "")
+        haskey(vm.proposals, proposal_id) && vm.proposals[proposal_id][:status] == :executed ||
+            return Dict("error" => "law requires an executed proposal", "success" => false)
+        vm.laws[law_id] = Dict{Symbol, Any}(
+            :id => law_id, :text => get(args, :text, ""), :proposal_id => proposal_id, :status => :active,
+        )
+        return Dict("law" => law_id, "status" => "active", "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x4a-0x4e", "success" => false)
+    end
+end
+
+function handle_quadrinity_government_4(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x4f  # COURT -- judicial body
+        court_id = get(args, :id, "")
+        isempty(court_id) && return Dict("error" => "court id required", "success" => false)
+        haskey(vm.courts, court_id) && return Dict("error" => "court already exists: $court_id", "success" => false)
+        judges = get(args, :judges, String[])
+        isempty(judges) && return Dict("error" => "judges required", "success" => false)
+        vm.courts[court_id] = Dict{Symbol, Any}(:id => court_id, :judges => judges)
+        return Dict("court" => court_id, "success" => true)
+
+    elseif opcode == 0x50  # VERDICT -- legal decision by an existing court
+        verdict_id = get(args, :id, "")
+        isempty(verdict_id) && return Dict("error" => "verdict id required", "success" => false)
+        haskey(vm.verdicts, verdict_id) && return Dict("error" => "verdict already exists: $verdict_id", "success" => false)
+        court_id = get(args, :court_id, "")
+        haskey(vm.courts, court_id) || return Dict("error" => "unknown court: $court_id", "success" => false)
+        ruling = get(args, :ruling, "")
+        isempty(ruling) && return Dict("error" => "ruling required", "success" => false)
+        vm.verdicts[verdict_id] = Dict{Symbol, Any}(
+            :id => verdict_id, :court_id => court_id, :case => get(args, :case, ""),
+            :ruling => ruling, :status => :final,
+        )
+        return Dict("verdict" => verdict_id, "status" => "final", "success" => true)
+
+    elseif opcode == 0x51  # APPEAL -- challenge a final verdict, once
+        verdict_id = get(args, :verdict_id, "")
+        haskey(vm.verdicts, verdict_id) || return Dict("error" => "unknown verdict: $verdict_id", "success" => false)
+        vm.verdicts[verdict_id][:status] != :final && return Dict("error" => "verdict not appealable: $verdict_id", "success" => false)
+        vm.verdicts[verdict_id][:status] = :appealed
+        vm.verdicts[verdict_id][:appeal_reason] = get(args, :reason, "")
+        return Dict("verdict" => verdict_id, "status" => "appealed", "success" => true)
+
+    elseif opcode == 0x52  # PARDON -- final_signer forgives an active sanction
+        sanction_id = get(args, :sanction_id, "")
+        haskey(vm.sanctions, sanction_id) || return Dict("error" => "unknown sanction: $sanction_id", "success" => false)
+        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may pardon", "success" => false)
+        vm.sanctions[sanction_id][:status] != :active && return Dict("error" => "sanction not active: $sanction_id", "success" => false)
+        vm.sanctions[sanction_id][:status] = :pardoned
+        return Dict("sanction" => sanction_id, "status" => "pardoned", "success" => true)
+
+    elseif opcode == 0x53  # SANCTION -- punish a violation, tied to an existing verdict
+        sanction_id = get(args, :id, "")
+        isempty(sanction_id) && return Dict("error" => "sanction id required", "success" => false)
+        haskey(vm.sanctions, sanction_id) && return Dict("error" => "sanction already exists: $sanction_id", "success" => false)
+        verdict_id = get(args, :verdict_id, "")
+        haskey(vm.verdicts, verdict_id) || return Dict("error" => "unknown verdict: $verdict_id", "success" => false)
+        target = get(args, :target, "")
+        isempty(target) && return Dict("error" => "target required", "success" => false)
+        vm.sanctions[sanction_id] = Dict{Symbol, Any}(
+            :id => sanction_id, :verdict_id => verdict_id, :target => target,
+            :penalty => get(args, :penalty, ""), :status => :active,
+        )
+        return Dict("sanction" => sanction_id, "status" => "active", "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x4f-0x53", "success" => false)
+    end
+end
+
+function handle_quadrinity_government(vm::VMState, opcode::UInt8, args)::Any
+    if opcode in 0x40:0x44
+        return handle_quadrinity_government_1(vm, opcode, args)
+    elseif opcode in 0x45:0x49
+        return handle_quadrinity_government_2(vm, opcode, args)
+    elseif opcode in 0x4a:0x4e
+        return handle_quadrinity_government_3(vm, opcode, args)
+    elseif opcode in 0x4f:0x53
+        return handle_quadrinity_government_4(vm, opcode, args)
+    end
+end
+
 
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
@@ -825,6 +1137,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             :reason => get(args, :reason, ""), :status => :open,
         )
         return Dict("dispute" => dispute_id, "target" => target_id, "success" => true)
+
+    # Quadrinity Government cluster (real stateful tracking, not decorative)
+    elseif opcode in 0x40:0x53  # Quadrinity Government cluster
+        return handle_quadrinity_government(vm, opcode, args)
 
     # Òrìṣà spiritual attributes (invocations)
     elseif opcode == 0xa0  # ORISA_OBATALA
