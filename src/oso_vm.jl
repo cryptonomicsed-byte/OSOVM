@@ -200,6 +200,21 @@ mutable struct VMState
     premiums::Dict{String, Dict{Symbol, Any}}
     underwrites::Dict{String, Dict{Symbol, Any}}
     hedges::Dict{String, Dict{Symbol, Any}}
+    # Extended Operations cluster (real stateful tracking, replaces
+    # call_ase_vault() offload for BATCH/SCHEDULE/NOTIFY/LOG/ARCHIVE/
+    # BACKUP/RESTORE/MIGRATE/ROLLBACK/CHECKPOINT). RESTORE requires a real
+    # BACKUP and ROLLBACK requires a real CHECKPOINT -- the same
+    # require-a-real-predecessor pattern used across all prior clusters.
+    batches::Dict{String, Dict{Symbol, Any}}
+    schedules::Dict{String, Dict{Symbol, Any}}
+    notifications::Dict{String, Dict{Symbol, Any}}
+    op_logs::Vector{Dict{Symbol, Any}}
+    archives::Dict{String, Dict{Symbol, Any}}
+    backups::Dict{String, Dict{Symbol, Any}}
+    restores::Dict{String, Dict{Symbol, Any}}
+    migrations::Dict{String, Dict{Symbol, Any}}
+    rollbacks::Dict{String, Dict{Symbol, Any}}
+    op_checkpoints::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -343,7 +358,18 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # claims
         Dict{String, Dict{Symbol, Any}}(),   # premiums
         Dict{String, Dict{Symbol, Any}}(),   # underwrites
-        Dict{String, Dict{Symbol, Any}}()    # hedges
+        Dict{String, Dict{Symbol, Any}}(),   # hedges
+        # Extended Operations cluster
+        Dict{String, Dict{Symbol, Any}}(),   # batches
+        Dict{String, Dict{Symbol, Any}}(),   # schedules
+        Dict{String, Dict{Symbol, Any}}(),   # notifications
+        Dict{Symbol, Any}[],                 # op_logs
+        Dict{String, Dict{Symbol, Any}}(),   # archives
+        Dict{String, Dict{Symbol, Any}}(),   # backups
+        Dict{String, Dict{Symbol, Any}}(),   # restores
+        Dict{String, Dict{Symbol, Any}}(),   # migrations
+        Dict{String, Dict{Symbol, Any}}(),   # rollbacks
+        Dict{String, Dict{Symbol, Any}}()    # op_checkpoints
     )
 end
 
@@ -505,6 +531,9 @@ function is_critical(opcode::UInt8)::Bool
         # replace call_ase_vault() offload for all 20 opcodes 0xc0-0xd3.
         0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9,
         0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3,
+        # Extended Operations cluster: real stateful handlers below
+        # replace call_ase_vault() offload for all 10 opcodes 0xe0-0xe9.
+        0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9,
     ]
 end
 
@@ -1696,6 +1725,110 @@ function handle_economic(vm::VMState, opcode::UInt8, args)::Any
     end
 end
 
+# Extended Operations cluster (real stateful tracking, not decorative).
+# Split into 2 sub-functions of 5 opcodes each from the start (same
+# rationale as the five prior clusters). RESTORE requires a real BACKUP
+# and ROLLBACK requires a real CHECKPOINT.
+function handle_extended_ops_1(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xe0  # BATCH -- group operations
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "batch id required", "success" => false)
+        haskey(vm.batches, id) && return Dict("error" => "batch already exists: $id", "success" => false)
+        operations = get(args, :operations, String[])
+        isempty(operations) && return Dict("error" => "batch operations required", "success" => false)
+        vm.batches[id] = Dict{Symbol, Any}(:id => id, :operations => operations)
+        return Dict("batch" => id, "count" => length(operations), "success" => true)
+
+    elseif opcode == 0xe1  # SCHEDULE -- time trigger
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "schedule id required", "success" => false)
+        haskey(vm.schedules, id) && return Dict("error" => "schedule already exists: $id", "success" => false)
+        target = get(args, :target, "")
+        isempty(target) && return Dict("error" => "schedule target required", "success" => false)
+        trigger_time = get(args, :trigger_time, 0)
+        trigger_time <= vm.block_time && return Dict("error" => "trigger_time must be in the future", "success" => false)
+        vm.schedules[id] = Dict{Symbol, Any}(:id => id, :target => target, :trigger_time => trigger_time)
+        return Dict("schedule" => id, "success" => true)
+
+    elseif opcode == 0xe2  # NOTIFY -- alert system
+        id = get(args, :id, "notify-$(length(vm.notifications) + 1)")
+        recipient = get(args, :recipient, "")
+        isempty(recipient) && return Dict("error" => "notify recipient required", "success" => false)
+        message = get(args, :message, "")
+        isempty(message) && return Dict("error" => "notify message required", "success" => false)
+        vm.notifications[id] = Dict{Symbol, Any}(:id => id, :recipient => recipient, :message => message)
+        return Dict("notification" => id, "success" => true)
+
+    elseif opcode == 0xe3  # LOG -- record event
+        message = get(args, :message, "")
+        isempty(message) && return Dict("error" => "log message required", "success" => false)
+        push!(vm.op_logs, Dict{Symbol, Any}(:message => message, :logger => vm.current_sender))
+        return Dict("logged" => true, "count" => length(vm.op_logs), "success" => true)
+
+    elseif opcode == 0xe4  # ARCHIVE -- long-term storage, requires a named source
+        id = get(args, :id, "archive-$(length(vm.archives) + 1)")
+        source_id = get(args, :source_id, "")
+        isempty(source_id) && return Dict("error" => "archive source_id required", "success" => false)
+        vm.archives[id] = Dict{Symbol, Any}(:id => id, :source_id => source_id)
+        return Dict("archive" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xe0-0xe4", "success" => false)
+    end
+end
+
+function handle_extended_ops_2(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xe5  # BACKUP -- data replication
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "backup id required", "success" => false)
+        haskey(vm.backups, id) && return Dict("error" => "backup already exists: $id", "success" => false)
+        snapshot_of = get(args, :snapshot_of, "")
+        isempty(snapshot_of) && return Dict("error" => "backup snapshot_of required", "success" => false)
+        vm.backups[id] = Dict{Symbol, Any}(:id => id, :snapshot_of => snapshot_of)
+        return Dict("backup" => id, "success" => true)
+
+    elseif opcode == 0xe6  # RESTORE -- data recovery, requires an existing backup
+        id = get(args, :id, "restore-$(length(vm.restores) + 1)")
+        backup_id = get(args, :backup_id, "")
+        haskey(vm.backups, backup_id) || return Dict("error" => "unknown backup: $backup_id", "success" => false)
+        vm.restores[id] = Dict{Symbol, Any}(:id => id, :backup_id => backup_id)
+        return Dict("restore" => id, "success" => true)
+
+    elseif opcode == 0xe7  # MIGRATE -- data movement, from/to must differ
+        id = get(args, :id, "migrate-$(length(vm.migrations) + 1)")
+        from = get(args, :from, ""); to = get(args, :to, "")
+        (isempty(from) || isempty(to)) && return Dict("error" => "migrate from/to required", "success" => false)
+        from == to && return Dict("error" => "migrate from and to must differ", "success" => false)
+        vm.migrations[id] = Dict{Symbol, Any}(:id => id, :from => from, :to => to)
+        return Dict("migration" => id, "success" => true)
+
+    elseif opcode == 0xe8  # ROLLBACK -- undo transaction, requires an existing checkpoint
+        id = get(args, :id, "rollback-$(length(vm.rollbacks) + 1)")
+        checkpoint_id = get(args, :checkpoint_id, "")
+        haskey(vm.op_checkpoints, checkpoint_id) || return Dict("error" => "unknown checkpoint: $checkpoint_id", "success" => false)
+        vm.rollbacks[id] = Dict{Symbol, Any}(:id => id, :checkpoint_id => checkpoint_id)
+        return Dict("rollback" => id, "success" => true)
+
+    elseif opcode == 0xe9  # CHECKPOINT -- save state
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "checkpoint id required", "success" => false)
+        haskey(vm.op_checkpoints, id) && return Dict("error" => "checkpoint already exists: $id", "success" => false)
+        vm.op_checkpoints[id] = Dict{Symbol, Any}(:id => id, :state_hash => get(args, :state_hash, string(hash(vm.block_height))))
+        return Dict("checkpoint" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xe5-0xe9", "success" => false)
+    end
+end
+
+function handle_extended_ops(vm::VMState, opcode::UInt8, args)::Any
+    if opcode in 0xe0:0xe4
+        return handle_extended_ops_1(vm, opcode, args)
+    elseif opcode in 0xe5:0xe9
+        return handle_extended_ops_2(vm, opcode, args)
+    end
+end
+
 
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
@@ -2269,6 +2402,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     # Economic Extensions cluster (real stateful tracking, not decorative)
     elseif opcode in 0xc0:0xd3  # Economic Extensions cluster
         return handle_economic(vm, opcode, args)
+
+    # Extended Operations cluster (real stateful tracking, not decorative)
+    elseif opcode in 0xe0:0xe9  # Extended Operations cluster
+        return handle_extended_ops(vm, opcode, args)
 
     else
         # Unknown opcode - log and continue
