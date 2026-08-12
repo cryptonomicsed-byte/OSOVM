@@ -151,6 +151,29 @@ mutable struct VMState
     pandemics::Dict{String, Dict{Symbol, Any}}
     recoveries::Dict{String, Dict{Symbol, Any}}       # patient_id => {condition, recovered_at}
     relapses::Dict{String, Dict{Symbol, Any}}
+    # Òrìṣà Spiritual Layer cluster (real stateful tracking, replaces both
+    # call_ase_vault() offload and the two decorative fixed-response
+    # invocations ORISA_OBATALA/ORISA_ESU used to be). Divination lineage
+    # (INITIATION -> DIVINER -> BABALAWO/IYALAWO) and the divination chain
+    # (IFA_DIVINATION -> ODU -> ESE) are the real invariant chains.
+    orisa_invocations::Dict{String, Dict{Symbol, Any}}   # id => {orisa, invoker}
+    divinations::Dict{String, Dict{Symbol, Any}}
+    odus::Dict{String, Dict{Symbol, Any}}
+    eses::Dict{String, Dict{Symbol, Any}}
+    ebos::Dict{String, Dict{Symbol, Any}}
+    ase_invocations::Dict{String, Dict{Symbol, Any}}
+    ancestral_calls::Dict{String, Dict{Symbol, Any}}
+    libations::Dict{String, Dict{Symbol, Any}}
+    initiated::Dict{String, Bool}
+    diviners::Dict{String, String}          # name => initiated_by
+    babalawos::Dict{String, Bool}
+    iyalawos::Dict{String, Bool}
+    iles::Dict{String, Dict{Symbol, Any}}
+    egbes::Dict{String, Dict{Symbol, Any}}
+    oris::Dict{String, Dict{Symbol, Any}}   # person => {destiny}, requires initiated
+    eguns::Dict{String, Dict{Symbol, Any}}
+    ajoguns::Dict{String, Dict{Symbol, Any}}
+    ibejis::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -254,7 +277,26 @@ function create_vm(;
         Dict{String, Vector{String}}(),      # vaccinations
         Dict{String, Dict{Symbol, Any}}(),   # pandemics
         Dict{String, Dict{Symbol, Any}}(),   # recoveries
-        Dict{String, Dict{Symbol, Any}}()    # relapses
+        Dict{String, Dict{Symbol, Any}}(),   # relapses
+        # Òrìṣà Spiritual Layer cluster
+        Dict{String, Dict{Symbol, Any}}(),   # orisa_invocations
+        Dict{String, Dict{Symbol, Any}}(),   # divinations
+        Dict{String, Dict{Symbol, Any}}(),   # odus
+        Dict{String, Dict{Symbol, Any}}(),   # eses
+        Dict{String, Dict{Symbol, Any}}(),   # ebos
+        Dict{String, Dict{Symbol, Any}}(),   # ase_invocations
+        Dict{String, Dict{Symbol, Any}}(),   # ancestral_calls
+        Dict{String, Dict{Symbol, Any}}(),   # libations
+        Dict{String, Bool}(),                # initiated
+        Dict{String, String}(),              # diviners
+        Dict{String, Bool}(),                # babalawos
+        Dict{String, Bool}(),                # iyalawos
+        Dict{String, Dict{Symbol, Any}}(),   # iles
+        Dict{String, Dict{Symbol, Any}}(),   # egbes
+        Dict{String, Dict{Symbol, Any}}(),   # oris
+        Dict{String, Dict{Symbol, Any}}(),   # eguns
+        Dict{String, Dict{Symbol, Any}}(),   # ajoguns
+        Dict{String, Dict{Symbol, Any}}()    # ibejis
     )
 end
 
@@ -405,6 +447,13 @@ function is_critical(opcode::UInt8)::Bool
         # call_ase_vault() offload for all 20 opcodes 0x80-0x93.
         0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
         0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93,
+        # Òrìṣà Spiritual Layer cluster: real stateful handlers below
+        # replace call_ase_vault() offload for the other 23 opcodes, plus
+        # the two decorative fixed-response branches 0xa0/0xa6 already
+        # listed above.
+        0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa7, 0xa8, 0xa9,
+        0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3,
+        0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
     ]
 end
 
@@ -1165,6 +1214,203 @@ function handle_hospital(vm::VMState, opcode::UInt8, args)::Any
     end
 end
 
+# Òrìṣà Spiritual Layer cluster (real stateful tracking, not decorative).
+# Split into 5 sub-functions of 5 opcodes each from the start (same
+# rationale as Church/Hospital -- giant elseif chains hang julia's codegen
+# on this VPS). Divination lineage (INITIATION -> DIVINER -> BABALAWO/
+# IYALAWO) and the divination chain (IFA_DIVINATION -> ODU -> ESE) are the
+# real invariant chains; the 7 ORISA_* invocation opcodes share one
+# generic dedupe-by-id pattern since they differ only in which òrìṣà.
+function handle_orisa_1(vm::VMState, opcode::UInt8, args)::Any
+    orisa_names = Dict{UInt8, String}(0xa0 => "Ọbàtálá", 0xa1 => "Ògún", 0xa2 => "Yemọja", 0xa3 => "Ṣàngó", 0xa4 => "Ọ̀ṣun")
+    if opcode in keys(orisa_names)
+        id = get(args, :id, "invocation-$(length(vm.orisa_invocations) + 1)")
+        haskey(vm.orisa_invocations, id) && return Dict("error" => "invocation already exists: $id", "success" => false)
+        vm.orisa_invocations[id] = Dict{Symbol, Any}(:id => id, :orisa => orisa_names[opcode], :invoker => vm.current_sender)
+        return Dict("invocation" => id, "orisa" => orisa_names[opcode], "success" => true)
+    else
+        return Dict("error" => "unreachable: opcode not in 0xa0-0xa4", "success" => false)
+    end
+end
+
+function handle_orisa_2(vm::VMState, opcode::UInt8, args)::Any
+    orisa_names = Dict{UInt8, String}(0xa5 => "Ọya", 0xa6 => "Èṣù", 0xa7 => "Ọ̀rúnmìlà")
+    if opcode in keys(orisa_names)
+        id = get(args, :id, "invocation-$(length(vm.orisa_invocations) + 1)")
+        haskey(vm.orisa_invocations, id) && return Dict("error" => "invocation already exists: $id", "success" => false)
+        vm.orisa_invocations[id] = Dict{Symbol, Any}(:id => id, :orisa => orisa_names[opcode], :invoker => vm.current_sender)
+        return Dict("invocation" => id, "orisa" => orisa_names[opcode], "success" => true)
+
+    elseif opcode == 0xa8  # IFA_DIVINATION -- oracle reading, requires a real diviner
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "divination id required", "success" => false)
+        haskey(vm.divinations, id) && return Dict("error" => "divination already exists: $id", "success" => false)
+        diviner = get(args, :diviner, "")
+        haskey(vm.diviners, diviner) || return Dict("error" => "unknown diviner: $diviner", "success" => false)
+        vm.divinations[id] = Dict{Symbol, Any}(:id => id, :diviner => diviner, :querent => vm.current_sender)
+        return Dict("divination" => id, "success" => true)
+
+    elseif opcode == 0xa9  # ODU -- sacred sign, requires an existing divination session
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "odu id required", "success" => false)
+        haskey(vm.odus, id) && return Dict("error" => "odu already exists: $id", "success" => false)
+        divination_id = get(args, :divination_id, "")
+        haskey(vm.divinations, divination_id) || return Dict("error" => "unknown divination: $divination_id", "success" => false)
+        vm.odus[id] = Dict{Symbol, Any}(:id => id, :divination_id => divination_id, :sign => get(args, :sign, ""))
+        return Dict("odu" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xa5-0xa9", "success" => false)
+    end
+end
+
+function handle_orisa_3(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xaa  # ESE -- proverb/teaching, requires an existing odu
+        id = get(args, :id, "ese-$(length(vm.eses) + 1)")
+        odu_id = get(args, :odu_id, "")
+        haskey(vm.odus, odu_id) || return Dict("error" => "unknown odu: $odu_id", "success" => false)
+        vm.eses[id] = Dict{Symbol, Any}(:id => id, :odu_id => odu_id, :proverb => get(args, :proverb, ""))
+        return Dict("ese" => id, "success" => true)
+
+    elseif opcode == 0xab  # EBO -- sacrifice/offering, requires an existing orisa invocation
+        id = get(args, :id, "ebo-$(length(vm.ebos) + 1)")
+        invocation_id = get(args, :invocation_id, "")
+        haskey(vm.orisa_invocations, invocation_id) || return Dict("error" => "unknown invocation: $invocation_id", "success" => false)
+        vm.ebos[id] = Dict{Symbol, Any}(:id => id, :invocation_id => invocation_id, :offering => get(args, :offering, ""))
+        return Dict("ebo" => id, "success" => true)
+
+    elseif opcode == 0xac  # ASE_INVOCATION -- power call, requires an existing odu or invocation as source
+        id = get(args, :id, "ase-$(length(vm.ase_invocations) + 1)")
+        source_id = get(args, :source_id, "")
+        (haskey(vm.odus, source_id) || haskey(vm.orisa_invocations, source_id)) ||
+            return Dict("error" => "unknown source (must be an odu or invocation): $source_id", "success" => false)
+        vm.ase_invocations[id] = Dict{Symbol, Any}(:id => id, :source_id => source_id, :invoker => vm.current_sender)
+        return Dict("ase_invocation" => id, "success" => true)
+
+    elseif opcode == 0xad  # ANCESTRAL_CALL -- connect lineage
+        id = get(args, :id, "call-$(length(vm.ancestral_calls) + 1)")
+        lineage = get(args, :lineage, "")
+        isempty(lineage) && return Dict("error" => "lineage required", "success" => false)
+        vm.ancestral_calls[id] = Dict{Symbol, Any}(:id => id, :caller => vm.current_sender, :lineage => lineage)
+        return Dict("ancestral_call" => id, "success" => true)
+
+    elseif opcode == 0xae  # LIBATION -- pour honor, requires an existing ancestor spirit (EGUN)
+        id = get(args, :id, "libation-$(length(vm.libations) + 1)")
+        egun_id = get(args, :egun_id, "")
+        haskey(vm.eguns, egun_id) || return Dict("error" => "unknown ancestor spirit: $egun_id", "success" => false)
+        vm.libations[id] = Dict{Symbol, Any}(:id => id, :egun_id => egun_id, :pourer => vm.current_sender)
+        return Dict("libation" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xaa-0xae", "success" => false)
+    end
+end
+
+function handle_orisa_4(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xaf  # INITIATION -- sacred entry, cannot double-initiate
+        name = get(args, :name, vm.current_sender)
+        get(vm.initiated, name, false) && return Dict("error" => "already initiated: $name", "success" => false)
+        vm.initiated[name] = true
+        return Dict("initiated" => name, "success" => true)
+
+    elseif opcode == 0xb0  # DIVINER -- oracle priest, requires initiation
+        name = get(args, :name, "")
+        isempty(name) && return Dict("error" => "diviner name required", "success" => false)
+        haskey(vm.diviners, name) && return Dict("error" => "already a diviner: $name", "success" => false)
+        get(vm.initiated, name, false) || return Dict("error" => "must be initiated first: $name", "success" => false)
+        vm.diviners[name] = vm.current_sender
+        return Dict("diviner" => name, "success" => true)
+
+    elseif opcode == 0xb1  # BABALAWO -- Ifá priest, requires diviner status
+        name = get(args, :name, "")
+        isempty(name) && return Dict("error" => "babalawo name required", "success" => false)
+        haskey(vm.diviners, name) || return Dict("error" => "must be a diviner first: $name", "success" => false)
+        get(vm.babalawos, name, false) && return Dict("error" => "already a babalawo: $name", "success" => false)
+        vm.babalawos[name] = true
+        return Dict("babalawo" => name, "success" => true)
+
+    elseif opcode == 0xb2  # IYALAWO -- Ifá priestess, requires diviner status
+        name = get(args, :name, "")
+        isempty(name) && return Dict("error" => "iyalawo name required", "success" => false)
+        haskey(vm.diviners, name) || return Dict("error" => "must be a diviner first: $name", "success" => false)
+        get(vm.iyalawos, name, false) && return Dict("error" => "already an iyalawo: $name", "success" => false)
+        vm.iyalawos[name] = true
+        return Dict("iyalawo" => name, "success" => true)
+
+    elseif opcode == 0xb3  # ILE -- sacred house
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "ile id required", "success" => false)
+        haskey(vm.iles, id) && return Dict("error" => "ile already exists: $id", "success" => false)
+        keeper = get(args, :keeper, "")
+        isempty(keeper) && return Dict("error" => "ile keeper required", "success" => false)
+        vm.iles[id] = Dict{Symbol, Any}(:id => id, :keeper => keeper)
+        return Dict("ile" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xaf-0xb3", "success" => false)
+    end
+end
+
+function handle_orisa_5(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xb4  # EGBE -- spiritual society
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "egbe id required", "success" => false)
+        haskey(vm.egbes, id) && return Dict("error" => "egbe already exists: $id", "success" => false)
+        members = get(args, :members, String[])
+        isempty(members) && return Dict("error" => "egbe members required", "success" => false)
+        vm.egbes[id] = Dict{Symbol, Any}(:id => id, :members => members)
+        return Dict("egbe" => id, "success" => true)
+
+    elseif opcode == 0xb5  # ORI -- inner head/destiny, requires initiation
+        person = get(args, :person, vm.current_sender)
+        get(vm.initiated, person, false) || return Dict("error" => "must be initiated first: $person", "success" => false)
+        haskey(vm.oris, person) && return Dict("error" => "ori already assigned: $person", "success" => false)
+        vm.oris[person] = Dict{Symbol, Any}(:person => person, :destiny => get(args, :destiny, ""))
+        return Dict("ori" => person, "success" => true)
+
+    elseif opcode == 0xb6  # EGUN -- ancestor spirit
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "egun id required", "success" => false)
+        haskey(vm.eguns, id) && return Dict("error" => "egun already exists: $id", "success" => false)
+        vm.eguns[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""))
+        return Dict("egun" => id, "success" => true)
+
+    elseif opcode == 0xb7  # AJOGUN -- malevolent force occurrence
+        id = get(args, :id, "ajogun-$(length(vm.ajoguns) + 1)")
+        harm = get(args, :harm, "")
+        isempty(harm) && return Dict("error" => "ajogun harm description required", "success" => false)
+        vm.ajoguns[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :harm => harm)
+        return Dict("ajogun" => id, "success" => true)
+
+    elseif opcode == 0xb8  # IBEJI -- twin spirit, requires two distinct twins
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "ibeji id required", "success" => false)
+        haskey(vm.ibejis, id) && return Dict("error" => "ibeji already exists: $id", "success" => false)
+        twin1 = get(args, :twin1, ""); twin2 = get(args, :twin2, "")
+        (isempty(twin1) || isempty(twin2)) && return Dict("error" => "both twins required", "success" => false)
+        twin1 == twin2 && return Dict("error" => "twins must be distinct", "success" => false)
+        vm.ibejis[id] = Dict{Symbol, Any}(:id => id, :twin1 => twin1, :twin2 => twin2)
+        return Dict("ibeji" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xb4-0xb8", "success" => false)
+    end
+end
+
+function handle_orisa(vm::VMState, opcode::UInt8, args)::Any
+    if opcode in 0xa0:0xa4
+        return handle_orisa_1(vm, opcode, args)
+    elseif opcode in 0xa5:0xa9
+        return handle_orisa_2(vm, opcode, args)
+    elseif opcode in 0xaa:0xae
+        return handle_orisa_3(vm, opcode, args)
+    elseif opcode in 0xaf:0xb3
+        return handle_orisa_4(vm, opcode, args)
+    elseif opcode in 0xb4:0xb8
+        return handle_orisa_5(vm, opcode, args)
+    end
+end
+
 
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
@@ -1729,13 +1975,12 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     elseif opcode in 0x80:0x93  # SimaaS Hospital cluster
         return handle_hospital(vm, opcode, args)
 
-    # Òrìṣà spiritual attributes (invocations)
-    elseif opcode == 0xa0  # ORISA_OBATALA
-        return Dict("orisa" => "Ọbàtálá", "aspect" => "purity", "ase" => 1.0)
-        
-    elseif opcode == 0xa6  # ORISA_ESU
-        return Dict("orisa" => "Èṣù", "aspect" => "crossroads", "message" => "Choice granted")
-        
+    # Òrìṣà Spiritual Layer cluster (real stateful tracking, not decorative
+    # fixed responses -- ORISA_OBATALA/ORISA_ESU used to always return the
+    # same literal Dict regardless of args or state)
+    elseif opcode in 0xa0:0xb8  # Òrìṣà Spiritual Layer cluster
+        return handle_orisa(vm, opcode, args)
+
     else
         # Unknown opcode - log and continue
         @warn "Unknown opcode: 0x$(string(opcode, base=16, pad=2)) ($attr)"
