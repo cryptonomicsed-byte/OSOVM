@@ -174,6 +174,32 @@ mutable struct VMState
     eguns::Dict{String, Dict{Symbol, Any}}
     ajoguns::Dict{String, Dict{Symbol, Any}}
     ibejis::Dict{String, Dict{Symbol, Any}}
+    # Economic Extensions cluster (real stateful tracking, replaces
+    # call_ase_vault() offload for MARKET/ORDER/LIQUIDITY/SWAP/YIELD/
+    # BOND/EQUITY/DIVIDEND/INTEREST/COLLATERAL/LOAN/REPAYMENT/DEFAULT/
+    # LIQUIDATION/AUCTION/INSURANCE/CLAIM/PREMIUM/UNDERWRITE/HEDGE).
+    # The real invariant chain: COLLATERAL -> LOAN -> REPAYMENT/DEFAULT
+    # -> LIQUIDATION, and INSURANCE -> PREMIUM/UNDERWRITE -> CLAIM.
+    markets::Dict{String, Dict{Symbol, Any}}
+    orders::Dict{String, Dict{Symbol, Any}}
+    liquidity_pools::Dict{String, Dict{Symbol, Any}}
+    swaps::Dict{String, Dict{Symbol, Any}}
+    yields::Dict{String, Dict{Symbol, Any}}
+    bonds::Dict{String, Dict{Symbol, Any}}
+    equities::Dict{String, Dict{Symbol, Any}}
+    dividends::Dict{String, Dict{Symbol, Any}}
+    interests::Dict{String, Dict{Symbol, Any}}
+    collaterals::Dict{String, Dict{Symbol, Any}}
+    loans::Dict{String, Dict{Symbol, Any}}
+    repayments::Dict{String, Dict{Symbol, Any}}
+    defaults::Dict{String, Dict{Symbol, Any}}     # loan_id => {...}
+    liquidations::Dict{String, Dict{Symbol, Any}}
+    auctions::Dict{String, Dict{Symbol, Any}}
+    insurances::Dict{String, Dict{Symbol, Any}}
+    claims::Dict{String, Dict{Symbol, Any}}
+    premiums::Dict{String, Dict{Symbol, Any}}
+    underwrites::Dict{String, Dict{Symbol, Any}}
+    hedges::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -296,7 +322,28 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # oris
         Dict{String, Dict{Symbol, Any}}(),   # eguns
         Dict{String, Dict{Symbol, Any}}(),   # ajoguns
-        Dict{String, Dict{Symbol, Any}}()    # ibejis
+        Dict{String, Dict{Symbol, Any}}(),   # ibejis
+        # Economic Extensions cluster
+        Dict{String, Dict{Symbol, Any}}(),   # markets
+        Dict{String, Dict{Symbol, Any}}(),   # orders
+        Dict{String, Dict{Symbol, Any}}(),   # liquidity_pools
+        Dict{String, Dict{Symbol, Any}}(),   # swaps
+        Dict{String, Dict{Symbol, Any}}(),   # yields
+        Dict{String, Dict{Symbol, Any}}(),   # bonds
+        Dict{String, Dict{Symbol, Any}}(),   # equities
+        Dict{String, Dict{Symbol, Any}}(),   # dividends
+        Dict{String, Dict{Symbol, Any}}(),   # interests
+        Dict{String, Dict{Symbol, Any}}(),   # collaterals
+        Dict{String, Dict{Symbol, Any}}(),   # loans
+        Dict{String, Dict{Symbol, Any}}(),   # repayments
+        Dict{String, Dict{Symbol, Any}}(),   # defaults
+        Dict{String, Dict{Symbol, Any}}(),   # liquidations
+        Dict{String, Dict{Symbol, Any}}(),   # auctions
+        Dict{String, Dict{Symbol, Any}}(),   # insurances
+        Dict{String, Dict{Symbol, Any}}(),   # claims
+        Dict{String, Dict{Symbol, Any}}(),   # premiums
+        Dict{String, Dict{Symbol, Any}}(),   # underwrites
+        Dict{String, Dict{Symbol, Any}}()    # hedges
     )
 end
 
@@ -454,6 +501,10 @@ function is_critical(opcode::UInt8)::Bool
         0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa7, 0xa8, 0xa9,
         0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3,
         0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
+        # Economic Extensions cluster: real stateful handlers below
+        # replace call_ase_vault() offload for all 20 opcodes 0xc0-0xd3.
+        0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9,
+        0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3,
     ]
 end
 
@@ -1411,6 +1462,240 @@ function handle_orisa(vm::VMState, opcode::UInt8, args)::Any
     end
 end
 
+# Economic Extensions cluster (real stateful tracking, not decorative).
+# Split into 4 sub-functions of 5 opcodes each from the start (same
+# rationale as the prior three clusters). Real invariant chains:
+# COLLATERAL -> LOAN -> REPAYMENT/DEFAULT -> LIQUIDATION, and
+# INSURANCE -> PREMIUM/UNDERWRITE -> CLAIM.
+function handle_economic_1(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xc0  # MARKET -- trading venue
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "market id required", "success" => false)
+        haskey(vm.markets, id) && return Dict("error" => "market already exists: $id", "success" => false)
+        vm.markets[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""))
+        return Dict("market" => id, "success" => true)
+
+    elseif opcode == 0xc1  # ORDER -- buy/sell request, requires an existing market
+        id = get(args, :id, "order-$(length(vm.orders) + 1)")
+        market_id = get(args, :market_id, "")
+        haskey(vm.markets, market_id) || return Dict("error" => "unknown market: $market_id", "success" => false)
+        amount = Float64(get(args, :amount, 0.0))
+        amount <= 0.0 && return Dict("error" => "order amount must be positive", "success" => false)
+        vm.orders[id] = Dict{Symbol, Any}(:id => id, :market_id => market_id, :side => get(args, :side, "buy"), :amount => amount)
+        return Dict("order" => id, "success" => true)
+
+    elseif opcode == 0xc2  # LIQUIDITY -- pool depth, requires an existing market
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "liquidity pool id required", "success" => false)
+        haskey(vm.liquidity_pools, id) && return Dict("error" => "pool already exists: $id", "success" => false)
+        market_id = get(args, :market_id, "")
+        haskey(vm.markets, market_id) || return Dict("error" => "unknown market: $market_id", "success" => false)
+        depth = Float64(get(args, :depth, 0.0))
+        depth <= 0.0 && return Dict("error" => "liquidity depth must be positive", "success" => false)
+        vm.liquidity_pools[id] = Dict{Symbol, Any}(:id => id, :market_id => market_id, :depth => depth)
+        return Dict("pool" => id, "success" => true)
+
+    elseif opcode == 0xc3  # SWAP -- exchange assets, requires a pool with sufficient depth
+        id = get(args, :id, "swap-$(length(vm.swaps) + 1)")
+        pool_id = get(args, :pool_id, "")
+        haskey(vm.liquidity_pools, pool_id) || return Dict("error" => "unknown pool: $pool_id", "success" => false)
+        amount_in = Float64(get(args, :amount_in, 0.0))
+        amount_in <= 0.0 && return Dict("error" => "swap amount must be positive", "success" => false)
+        pool = vm.liquidity_pools[pool_id]
+        amount_in > pool[:depth] && return Dict("error" => "insufficient pool depth", "success" => false)
+        pool[:depth] -= amount_in
+        vm.swaps[id] = Dict{Symbol, Any}(:id => id, :pool_id => pool_id, :amount_in => amount_in)
+        return Dict("swap" => id, "success" => true)
+
+    elseif opcode == 0xc4  # YIELD -- return rate on a real prior source
+        id = get(args, :id, "yield-$(length(vm.yields) + 1)")
+        source_id = get(args, :source_id, "")
+        (haskey(vm.markets, source_id) || haskey(vm.liquidity_pools, source_id) || haskey(vm.bonds, source_id)) ||
+            return Dict("error" => "unknown source (market, pool, or bond): $source_id", "success" => false)
+        rate = Float64(get(args, :rate, 0.0))
+        (rate < 0.0 || rate > 1.0) && return Dict("error" => "rate must be in [0,1]", "success" => false)
+        vm.yields[id] = Dict{Symbol, Any}(:id => id, :source_id => source_id, :rate => rate)
+        return Dict("yield" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xc0-0xc4", "success" => false)
+    end
+end
+
+function handle_economic_2(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xc5  # BOND -- debt instrument
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "bond id required", "success" => false)
+        haskey(vm.bonds, id) && return Dict("error" => "bond already exists: $id", "success" => false)
+        face_value = Float64(get(args, :face_value, 0.0))
+        face_value <= 0.0 && return Dict("error" => "bond face_value must be positive", "success" => false)
+        vm.bonds[id] = Dict{Symbol, Any}(:id => id, :issuer => vm.current_sender, :face_value => face_value, :maturity => get(args, :maturity, 0))
+        return Dict("bond" => id, "success" => true)
+
+    elseif opcode == 0xc6  # EQUITY -- ownership share
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "equity id required", "success" => false)
+        haskey(vm.equities, id) && return Dict("error" => "equity already exists: $id", "success" => false)
+        shares = get(args, :shares, 0)
+        shares <= 0 && return Dict("error" => "equity shares must be positive", "success" => false)
+        vm.equities[id] = Dict{Symbol, Any}(:id => id, :company => get(args, :company, ""), :shares => shares)
+        return Dict("equity" => id, "success" => true)
+
+    elseif opcode == 0xc7  # DIVIDEND -- profit distribution, requires an existing equity
+        id = get(args, :id, "dividend-$(length(vm.dividends) + 1)")
+        equity_id = get(args, :equity_id, "")
+        haskey(vm.equities, equity_id) || return Dict("error" => "unknown equity: $equity_id", "success" => false)
+        amount = Float64(get(args, :amount, 0.0))
+        amount <= 0.0 && return Dict("error" => "dividend amount must be positive", "success" => false)
+        vm.dividends[id] = Dict{Symbol, Any}(:id => id, :equity_id => equity_id, :amount => amount)
+        return Dict("dividend" => id, "success" => true)
+
+    elseif opcode == 0xc8  # INTEREST -- debt cost, requires an existing loan
+        id = get(args, :id, "interest-$(length(vm.interests) + 1)")
+        loan_id = get(args, :loan_id, "")
+        haskey(vm.loans, loan_id) || return Dict("error" => "unknown loan: $loan_id", "success" => false)
+        rate = Float64(get(args, :rate, 0.0))
+        rate <= 0.0 && return Dict("error" => "interest rate must be positive", "success" => false)
+        vm.interests[id] = Dict{Symbol, Any}(:id => id, :loan_id => loan_id, :rate => rate)
+        return Dict("interest" => id, "success" => true)
+
+    elseif opcode == 0xc9  # COLLATERAL -- security deposit
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "collateral id required", "success" => false)
+        haskey(vm.collaterals, id) && return Dict("error" => "collateral already exists: $id", "success" => false)
+        value = Float64(get(args, :value, 0.0))
+        value <= 0.0 && return Dict("error" => "collateral value must be positive", "success" => false)
+        vm.collaterals[id] = Dict{Symbol, Any}(:id => id, :owner => vm.current_sender, :asset => get(args, :asset, ""), :value => value, :locked => false)
+        return Dict("collateral" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xc5-0xc9", "success" => false)
+    end
+end
+
+function handle_economic_3(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xca  # LOAN -- borrowed capital, requires unlocked collateral
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "loan id required", "success" => false)
+        haskey(vm.loans, id) && return Dict("error" => "loan already exists: $id", "success" => false)
+        collateral_id = get(args, :collateral_id, "")
+        haskey(vm.collaterals, collateral_id) || return Dict("error" => "unknown collateral: $collateral_id", "success" => false)
+        vm.collaterals[collateral_id][:locked] && return Dict("error" => "collateral already locked: $collateral_id", "success" => false)
+        principal = Float64(get(args, :principal, 0.0))
+        principal <= 0.0 && return Dict("error" => "loan principal must be positive", "success" => false)
+        vm.collaterals[collateral_id][:locked] = true
+        vm.loans[id] = Dict{Symbol, Any}(:id => id, :borrower => vm.current_sender, :principal => principal, :collateral_id => collateral_id, :status => :active, :repaid => 0.0)
+        return Dict("loan" => id, "success" => true)
+
+    elseif opcode == 0xcb  # REPAYMENT -- debt servicing, requires an active loan
+        id = get(args, :id, "repayment-$(length(vm.repayments) + 1)")
+        loan_id = get(args, :loan_id, "")
+        haskey(vm.loans, loan_id) || return Dict("error" => "unknown loan: $loan_id", "success" => false)
+        vm.loans[loan_id][:status] != :active && return Dict("error" => "loan not active: $loan_id", "success" => false)
+        amount = Float64(get(args, :amount, 0.0))
+        amount <= 0.0 && return Dict("error" => "repayment amount must be positive", "success" => false)
+        vm.loans[loan_id][:repaid] += amount
+        vm.repayments[id] = Dict{Symbol, Any}(:id => id, :loan_id => loan_id, :amount => amount)
+        if vm.loans[loan_id][:repaid] >= vm.loans[loan_id][:principal]
+            vm.loans[loan_id][:status] = :repaid
+            collateral_id = vm.loans[loan_id][:collateral_id]
+            haskey(vm.collaterals, collateral_id) && (vm.collaterals[collateral_id][:locked] = false)
+        end
+        return Dict("repayment" => id, "loan_status" => string(vm.loans[loan_id][:status]), "success" => true)
+
+    elseif opcode == 0xcc  # DEFAULT -- failed obligation, requires an active loan
+        loan_id = get(args, :loan_id, "")
+        haskey(vm.loans, loan_id) || return Dict("error" => "unknown loan: $loan_id", "success" => false)
+        vm.loans[loan_id][:status] != :active && return Dict("error" => "loan not active: $loan_id", "success" => false)
+        vm.loans[loan_id][:status] = :defaulted
+        vm.defaults[loan_id] = Dict{Symbol, Any}(:loan_id => loan_id, :reason => get(args, :reason, ""))
+        return Dict("loan" => loan_id, "status" => "defaulted", "success" => true)
+
+    elseif opcode == 0xcd  # LIQUIDATION -- forced sale, requires a defaulted loan
+        id = get(args, :id, "liquidation-$(length(vm.liquidations) + 1)")
+        loan_id = get(args, :loan_id, "")
+        haskey(vm.defaults, loan_id) || return Dict("error" => "loan not in default: $loan_id", "success" => false)
+        collateral_id = vm.loans[loan_id][:collateral_id]
+        vm.liquidations[id] = Dict{Symbol, Any}(:id => id, :loan_id => loan_id, :collateral_id => collateral_id)
+        haskey(vm.collaterals, collateral_id) && (vm.collaterals[collateral_id][:locked] = false)
+        return Dict("liquidation" => id, "success" => true)
+
+    elseif opcode == 0xce  # AUCTION -- competitive sale
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "auction id required", "success" => false)
+        haskey(vm.auctions, id) && return Dict("error" => "auction already exists: $id", "success" => false)
+        reserve_price = Float64(get(args, :reserve_price, 0.0))
+        reserve_price < 0.0 && return Dict("error" => "reserve_price cannot be negative", "success" => false)
+        vm.auctions[id] = Dict{Symbol, Any}(:id => id, :item => get(args, :item, ""), :reserve_price => reserve_price)
+        return Dict("auction" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xca-0xce", "success" => false)
+    end
+end
+
+function handle_economic_4(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0xcf  # INSURANCE -- risk coverage
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "insurance id required", "success" => false)
+        haskey(vm.insurances, id) && return Dict("error" => "insurance already exists: $id", "success" => false)
+        coverage = Float64(get(args, :coverage, 0.0))
+        coverage <= 0.0 && return Dict("error" => "coverage must be positive", "success" => false)
+        vm.insurances[id] = Dict{Symbol, Any}(:id => id, :holder => vm.current_sender, :coverage => coverage, :underwritten => false)
+        return Dict("insurance" => id, "success" => true)
+
+    elseif opcode == 0xd0  # CLAIM -- insurance payout, requires underwritten insurance
+        id = get(args, :id, "claim-$(length(vm.claims) + 1)")
+        insurance_id = get(args, :insurance_id, "")
+        haskey(vm.insurances, insurance_id) || return Dict("error" => "unknown insurance: $insurance_id", "success" => false)
+        vm.insurances[insurance_id][:underwritten] || return Dict("error" => "insurance not underwritten: $insurance_id", "success" => false)
+        amount = Float64(get(args, :amount, 0.0))
+        amount > vm.insurances[insurance_id][:coverage] && return Dict("error" => "claim exceeds coverage", "success" => false)
+        vm.claims[id] = Dict{Symbol, Any}(:id => id, :insurance_id => insurance_id, :amount => amount)
+        return Dict("claim" => id, "success" => true)
+
+    elseif opcode == 0xd1  # PREMIUM -- insurance cost, requires an existing insurance
+        id = get(args, :id, "premium-$(length(vm.premiums) + 1)")
+        insurance_id = get(args, :insurance_id, "")
+        haskey(vm.insurances, insurance_id) || return Dict("error" => "unknown insurance: $insurance_id", "success" => false)
+        amount = Float64(get(args, :amount, 0.0))
+        amount <= 0.0 && return Dict("error" => "premium amount must be positive", "success" => false)
+        vm.premiums[id] = Dict{Symbol, Any}(:id => id, :insurance_id => insurance_id, :amount => amount)
+        return Dict("premium" => id, "success" => true)
+
+    elseif opcode == 0xd2  # UNDERWRITE -- risk assumption, requires an existing insurance
+        insurance_id = get(args, :insurance_id, "")
+        haskey(vm.insurances, insurance_id) || return Dict("error" => "unknown insurance: $insurance_id", "success" => false)
+        vm.insurances[insurance_id][:underwritten] && return Dict("error" => "already underwritten: $insurance_id", "success" => false)
+        vm.insurances[insurance_id][:underwritten] = true
+        vm.underwrites[insurance_id] = Dict{Symbol, Any}(:insurance_id => insurance_id, :underwriter => vm.current_sender)
+        return Dict("insurance" => insurance_id, "underwritten" => true, "success" => true)
+
+    elseif opcode == 0xd3  # HEDGE -- risk offset against a real prior loan or insurance
+        id = get(args, :id, "hedge-$(length(vm.hedges) + 1)")
+        target_id = get(args, :target_id, "")
+        (haskey(vm.loans, target_id) || haskey(vm.insurances, target_id)) ||
+            return Dict("error" => "unknown target (must be a loan or insurance): $target_id", "success" => false)
+        vm.hedges[id] = Dict{Symbol, Any}(:id => id, :target_id => target_id, :instrument => get(args, :instrument, ""))
+        return Dict("hedge" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0xcf-0xd3", "success" => false)
+    end
+end
+
+function handle_economic(vm::VMState, opcode::UInt8, args)::Any
+    if opcode in 0xc0:0xc4
+        return handle_economic_1(vm, opcode, args)
+    elseif opcode in 0xc5:0xc9
+        return handle_economic_2(vm, opcode, args)
+    elseif opcode in 0xca:0xce
+        return handle_economic_3(vm, opcode, args)
+    elseif opcode in 0xcf:0xd3
+        return handle_economic_4(vm, opcode, args)
+    end
+end
+
 
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
@@ -1980,6 +2265,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     # same literal Dict regardless of args or state)
     elseif opcode in 0xa0:0xb8  # Òrìṣà Spiritual Layer cluster
         return handle_orisa(vm, opcode, args)
+
+    # Economic Extensions cluster (real stateful tracking, not decorative)
+    elseif opcode in 0xc0:0xd3  # Economic Extensions cluster
+        return handle_economic(vm, opcode, args)
 
     else
         # Unknown opcode - log and continue
