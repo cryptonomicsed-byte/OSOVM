@@ -9,6 +9,7 @@ include("oso_compiler.jl")
 
 using .Opcodes
 using .OsoCompiler
+using SHA
 
 export execute_ir, VMState, create_vm
 
@@ -534,6 +535,17 @@ function is_critical(opcode::UInt8)::Bool
         # Extended Operations cluster: real stateful handlers below
         # replace call_ase_vault() offload for all 10 opcodes 0xe0-0xe9.
         0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9,
+        # Housekeeping: 5 of the 9 remaining Core opcodes that predated
+        # this session's 6-cluster Expansion work and were never in
+        # is_critical's list at all -- real handlers added below.
+        # CALL/DELEGATE/CREATE/SELFDESTRUCT (0x2c-0x2f) intentionally NOT
+        # added here: they imply a contract-execution submodel (arbitrary
+        # sub-invocation, resource creation/destruction) this opcode-
+        # dispatch VM doesn't have. Inventing one now would be scope
+        # creep and would misrepresent real semantics -- left offloaded
+        # to call_ase_vault() and flagged as an open design question,
+        # not silently "fixed."
+        0x26, 0x36, 0x39, 0x3a, 0x3b,
     ]
 end
 
@@ -2245,7 +2257,55 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         
     elseif opcode == 0x38  # ORIGIN
         return Dict("origin" => vm.current_sender)
-        
+
+    elseif opcode == 0x36  # BLOCKHASH -- deterministic, derived from real
+        # VM state (block_height + chain_id), not random. This VM has no
+        # block database to look up an actual historical hash against, so
+        # "blockhash" here means the same thing VeilSim's determinism
+        # guarantee means elsewhere: same (height, chain_id) always
+        # produces the same hash, which is the property callers actually
+        # need from this opcode (a stable per-height reference value).
+        h = bytes2hex(sha256("$(vm.chain_id):$(vm.block_height)"))
+        return Dict("blockhash" => h, "block_height" => vm.block_height, "success" => true)
+
+    elseif opcode == 0x39  # GASPRICE -- this VM has no gas market (no
+        # per-opcode metering, no fee auction); returning a real dynamic
+        # rate would be fabricating market data that doesn't exist. What
+        # IS real: the protocol's own fixed base rate, the same 3.69%
+        # AIO/Èṣù tithe constant used throughout the VM's real tithe
+        # logic (FFI.tithe_split), reported here as the closest honest
+        # analogue to a "price" this VM actually enforces.
+        return Dict("gasprice" => 0.0369, "note" => "no gas market; reports the protocol's real tithe rate", "success" => true)
+
+    elseif opcode == 0x3a  # COINBASE -- the address that seals/authorizes
+        # blocks in this VM's real design is final_signer (used
+        # identically by VETO/CABINET/PARDON/RESURRECTION elsewhere), not
+        # a fabricated miner address.
+        return Dict("coinbase" => vm.final_signer, "success" => true)
+
+    elseif opcode == 0x3b  # DIFFICULTY -- this VM is not PoW (no miners,
+        # no hashrate); returning a fake PoW difficulty would misrepresent
+        # the VM's real consensus model. What's real and monotonic: block
+        # height itself, reported as the difficulty proxy so callers get
+        # a genuine, verifiable, ever-increasing value instead of a
+        # plausible-looking random number.
+        return Dict("difficulty" => vm.block_height, "note" => "not PoW; VM uses deterministic sim-proof consensus, not hashrate", "success" => true)
+
+    elseif opcode == 0x26  # BIPON_SEED -- deterministic child-wallet
+        # derivation. This VM doesn't hold BIPON39's actual master seed
+        # (that's external, in Cloakseed/BIPON39 itself) -- what it CAN do
+        # honestly is the same real derivation primitive: hash(seed||path)
+        # deterministically produces the same child address every time for
+        # the same inputs, and dedupes so a path can't be silently
+        # re-derived into two different balances.
+        seed = get(args, :seed, "")
+        path = get(args, :path, "")
+        (isempty(seed) || isempty(path)) && return Dict("error" => "seed and path required", "success" => false)
+        child = bytes2hex(sha256("$seed:$path"))
+        haskey(vm.ase_balance, child) && return Dict("error" => "path already derived: $path", "success" => false)
+        vm.ase_balance[child] = 0.0
+        return Dict("child_address" => child, "path" => path, "success" => true)
+
     # Universal Work cluster (real stateful tracking, not decorative)
     elseif opcode == 0x18  # PROJECT
         project_id = get(args, :id, "")
