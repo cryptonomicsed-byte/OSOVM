@@ -127,6 +127,30 @@ mutable struct VMState
     confessions::Dict{String, Dict{Symbol, Any}}
     penances::Dict{String, Dict{Symbol, Any}}
     resurrections::Dict{String, Dict{Symbol, Any}}
+    # SimaaS Hospital cluster (real stateful tracking, replaces
+    # call_ase_vault() offload for PATIENT/DIAGNOSIS/TREATMENT/
+    # PRESCRIPTION/SURGERY/THERAPY/VITALS/ADMISSION/DISCHARGE/EMERGENCY/
+    # TRIAGE/WARD/ICU/MORGUE/AUTOPSY/QUARANTINE/VACCINE/PANDEMIC/
+    # RECOVERY/RELAPSE). A patient's care lifecycle (register -> diagnose
+    # -> admit -> discharge, or -> morgue -> autopsy) is the real
+    # invariant chain, mirroring Church's clergy progression pattern.
+    patients::Dict{String, Dict{Symbol, Any}}
+    diagnoses::Dict{String, Dict{Symbol, Any}}
+    treatments::Dict{String, Dict{Symbol, Any}}
+    prescriptions::Dict{String, Dict{Symbol, Any}}
+    surgeries::Dict{String, Dict{Symbol, Any}}
+    therapies::Dict{String, Dict{Symbol, Any}}
+    vitals::Dict{String, Vector{Dict{Symbol, Any}}}   # patient_id => readings
+    admissions::Dict{String, Dict{Symbol, Any}}       # patient_id => {ward_id, ...} while admitted
+    wards::Dict{String, Dict{Symbol, Any}}            # id => {capacity, occupants}
+    icus::Dict{String, Dict{Symbol, Any}}             # id => {capacity, occupants}
+    morgue::Dict{String, Dict{Symbol, Any}}           # patient_id => {cause}
+    autopsies::Dict{String, Dict{Symbol, Any}}
+    quarantines::Dict{String, Dict{Symbol, Any}}      # patient_id => {reason, active}
+    vaccinations::Dict{String, Vector{String}}        # patient_id => [vaccine names]
+    pandemics::Dict{String, Dict{Symbol, Any}}
+    recoveries::Dict{String, Dict{Symbol, Any}}       # patient_id => {condition, recovered_at}
+    relapses::Dict{String, Dict{Symbol, Any}}
 end
 
 function create_vm(; 
@@ -212,7 +236,25 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # communions
         Dict{String, Dict{Symbol, Any}}(),   # confessions
         Dict{String, Dict{Symbol, Any}}(),   # penances
-        Dict{String, Dict{Symbol, Any}}()    # resurrections
+        Dict{String, Dict{Symbol, Any}}(),   # resurrections
+        # SimaaS Hospital cluster
+        Dict{String, Dict{Symbol, Any}}(),   # patients
+        Dict{String, Dict{Symbol, Any}}(),   # diagnoses
+        Dict{String, Dict{Symbol, Any}}(),   # treatments
+        Dict{String, Dict{Symbol, Any}}(),   # prescriptions
+        Dict{String, Dict{Symbol, Any}}(),   # surgeries
+        Dict{String, Dict{Symbol, Any}}(),   # therapies
+        Dict{String, Vector{Dict{Symbol, Any}}}(),  # vitals
+        Dict{String, Dict{Symbol, Any}}(),   # admissions
+        Dict{String, Dict{Symbol, Any}}(),   # wards
+        Dict{String, Dict{Symbol, Any}}(),   # icus
+        Dict{String, Dict{Symbol, Any}}(),   # morgue
+        Dict{String, Dict{Symbol, Any}}(),   # autopsies
+        Dict{String, Dict{Symbol, Any}}(),   # quarantines
+        Dict{String, Vector{String}}(),      # vaccinations
+        Dict{String, Dict{Symbol, Any}}(),   # pandemics
+        Dict{String, Dict{Symbol, Any}}(),   # recoveries
+        Dict{String, Dict{Symbol, Any}}()    # relapses
     )
 end
 
@@ -359,6 +401,10 @@ function is_critical(opcode::UInt8)::Bool
         0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
         0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73,
         0x74, 0x75, 0x76, 0x77, 0x78,
+        # SimaaS Hospital cluster: real stateful handlers below replace
+        # call_ase_vault() offload for all 20 opcodes 0x80-0x93.
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+        0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93,
     ]
 end
 
@@ -913,6 +959,209 @@ function handle_church(vm::VMState, opcode::UInt8, args)::Any
         return handle_church_4(vm, opcode, args)
     elseif opcode in 0x74:0x78
         return handle_church_5(vm, opcode, args)
+    end
+end
+
+# SimaaS Hospital cluster (real stateful tracking, not decorative).
+# Split into 4 sub-functions of 5 opcodes each from the start (see Church's
+# comment for why: giant elseif chains hang julia's LLVM codegen here).
+function handle_hospital_1(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x80  # PATIENT -- register a care recipient
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "patient id required", "success" => false)
+        haskey(vm.patients, id) && return Dict("error" => "patient already registered: $id", "success" => false)
+        vm.patients[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :status => :registered)
+        return Dict("patient" => id, "success" => true)
+
+    elseif opcode == 0x81  # DIAGNOSIS -- requires an existing patient
+        id = get(args, :id, "diagnosis-$(length(vm.diagnoses) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        condition = get(args, :condition, "")
+        isempty(condition) && return Dict("error" => "diagnosis condition required", "success" => false)
+        vm.diagnoses[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :condition => condition)
+        return Dict("diagnosis" => id, "success" => true)
+
+    elseif opcode == 0x82  # TREATMENT -- requires an existing diagnosis
+        id = get(args, :id, "treatment-$(length(vm.treatments) + 1)")
+        diagnosis_id = get(args, :diagnosis_id, "")
+        haskey(vm.diagnoses, diagnosis_id) || return Dict("error" => "unknown diagnosis: $diagnosis_id", "success" => false)
+        vm.treatments[id] = Dict{Symbol, Any}(:id => id, :diagnosis_id => diagnosis_id, :plan => get(args, :plan, ""))
+        return Dict("treatment" => id, "success" => true)
+
+    elseif opcode == 0x83  # PRESCRIPTION -- requires an existing patient
+        id = get(args, :id, "prescription-$(length(vm.prescriptions) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        medicine = get(args, :medicine, "")
+        isempty(medicine) && return Dict("error" => "prescription medicine required", "success" => false)
+        vm.prescriptions[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :medicine => medicine, :dosage => get(args, :dosage, ""))
+        return Dict("prescription" => id, "success" => true)
+
+    elseif opcode == 0x84  # SURGERY -- requires an existing patient and a named surgeon
+        id = get(args, :id, "surgery-$(length(vm.surgeries) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        surgeon = get(args, :surgeon, "")
+        isempty(surgeon) && return Dict("error" => "surgeon required", "success" => false)
+        vm.surgeries[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :surgeon => surgeon, :procedure => get(args, :procedure, ""))
+        return Dict("surgery" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x80-0x84", "success" => false)
+    end
+end
+
+function handle_hospital_2(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x85  # THERAPY -- requires an existing patient
+        id = get(args, :id, "therapy-$(length(vm.therapies) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        vm.therapies[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :type => get(args, :type, ""))
+        return Dict("therapy" => id, "success" => true)
+
+    elseif opcode == 0x86  # VITALS -- requires an existing patient, records a reading
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        reading = Dict{Symbol, Any}(:hr => get(args, :hr, 0), :bp => get(args, :bp, ""), :temp => get(args, :temp, 0.0))
+        readings = get!(vm.vitals, patient_id, Dict{Symbol, Any}[])
+        push!(readings, reading)
+        return Dict("patient" => patient_id, "readings" => length(readings), "success" => true)
+
+    elseif opcode == 0x87  # ADMISSION -- requires patient + ward with free capacity, not already admitted
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        haskey(vm.admissions, patient_id) && return Dict("error" => "already admitted: $patient_id", "success" => false)
+        ward_id = get(args, :ward_id, "")
+        haskey(vm.wards, ward_id) || return Dict("error" => "unknown ward: $ward_id", "success" => false)
+        ward = vm.wards[ward_id]
+        length(ward[:occupants]) >= ward[:capacity] && return Dict("error" => "ward at capacity: $ward_id", "success" => false)
+        push!(ward[:occupants], patient_id)
+        vm.admissions[patient_id] = Dict{Symbol, Any}(:ward_id => ward_id)
+        vm.patients[patient_id][:status] = :admitted
+        return Dict("patient" => patient_id, "ward" => ward_id, "success" => true)
+
+    elseif opcode == 0x88  # DISCHARGE -- requires patient currently admitted
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.admissions, patient_id) || return Dict("error" => "not admitted: $patient_id", "success" => false)
+        ward_id = vm.admissions[patient_id][:ward_id]
+        haskey(vm.wards, ward_id) && filter!(p -> p != patient_id, vm.wards[ward_id][:occupants])
+        delete!(vm.admissions, patient_id)
+        vm.patients[patient_id][:status] = :discharged
+        return Dict("patient" => patient_id, "status" => "discharged", "success" => true)
+
+    elseif opcode == 0x89  # EMERGENCY -- requires an existing patient, flags emergency status
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        vm.patients[patient_id][:emergency] = true
+        return Dict("patient" => patient_id, "emergency" => true, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x85-0x89", "success" => false)
+    end
+end
+
+function handle_hospital_3(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x8a  # TRIAGE -- requires an existing patient, assigns priority 1-5
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        priority = get(args, :priority, 0)
+        (priority < 1 || priority > 5) && return Dict("error" => "priority must be 1-5", "success" => false)
+        vm.patients[patient_id][:triage_priority] = priority
+        return Dict("patient" => patient_id, "priority" => priority, "success" => true)
+
+    elseif opcode == 0x8b  # WARD -- create a care unit with capacity
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "ward id required", "success" => false)
+        haskey(vm.wards, id) && return Dict("error" => "ward already exists: $id", "success" => false)
+        capacity = get(args, :capacity, 0)
+        capacity <= 0 && return Dict("error" => "ward capacity must be positive", "success" => false)
+        vm.wards[id] = Dict{Symbol, Any}(:id => id, :capacity => capacity, :occupants => String[])
+        return Dict("ward" => id, "success" => true)
+
+    elseif opcode == 0x8c  # ICU -- create an intensive-care unit with capacity
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "icu id required", "success" => false)
+        haskey(vm.icus, id) && return Dict("error" => "icu already exists: $id", "success" => false)
+        capacity = get(args, :capacity, 0)
+        capacity <= 0 && return Dict("error" => "icu capacity must be positive", "success" => false)
+        vm.icus[id] = Dict{Symbol, Any}(:id => id, :capacity => capacity, :occupants => String[])
+        return Dict("icu" => id, "success" => true)
+
+    elseif opcode == 0x8d  # MORGUE -- register a death, requires patient exists and not already deceased
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        haskey(vm.morgue, patient_id) && return Dict("error" => "already in morgue: $patient_id", "success" => false)
+        vm.morgue[patient_id] = Dict{Symbol, Any}(:patient_id => patient_id, :cause => get(args, :cause, ""))
+        vm.patients[patient_id][:status] = :deceased
+        return Dict("patient" => patient_id, "status" => "deceased", "success" => true)
+
+    elseif opcode == 0x8e  # AUTOPSY -- requires patient is in the morgue
+        id = get(args, :id, "autopsy-$(length(vm.autopsies) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.morgue, patient_id) || return Dict("error" => "patient not in morgue: $patient_id", "success" => false)
+        vm.autopsies[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :findings => get(args, :findings, ""))
+        return Dict("autopsy" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x8a-0x8e", "success" => false)
+    end
+end
+
+function handle_hospital_4(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x8f  # QUARANTINE -- requires an existing patient
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        vm.quarantines[patient_id] = Dict{Symbol, Any}(:reason => get(args, :reason, ""), :active => true)
+        return Dict("patient" => patient_id, "quarantined" => true, "success" => true)
+
+    elseif opcode == 0x90  # VACCINE -- requires patient, cannot give the same vaccine twice
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        vaccine = get(args, :vaccine, "")
+        isempty(vaccine) && return Dict("error" => "vaccine name required", "success" => false)
+        given = get!(vm.vaccinations, patient_id, String[])
+        vaccine in given && return Dict("error" => "already vaccinated with $vaccine", "success" => false)
+        push!(given, vaccine)
+        return Dict("patient" => patient_id, "vaccine" => vaccine, "success" => true)
+
+    elseif opcode == 0x91  # PANDEMIC -- declare a mass outbreak
+        id = get(args, :id, "")
+        isempty(id) && return Dict("error" => "pandemic id required", "success" => false)
+        haskey(vm.pandemics, id) && return Dict("error" => "pandemic already declared: $id", "success" => false)
+        vm.pandemics[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :active => true)
+        return Dict("pandemic" => id, "success" => true)
+
+    elseif opcode == 0x92  # RECOVERY -- requires an existing diagnosis, marks the condition recovered
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.patients, patient_id) || return Dict("error" => "unknown patient: $patient_id", "success" => false)
+        condition = get(args, :condition, "")
+        isempty(condition) && return Dict("error" => "recovery condition required", "success" => false)
+        vm.recoveries[patient_id] = Dict{Symbol, Any}(:patient_id => patient_id, :condition => condition)
+        return Dict("patient" => patient_id, "status" => "recovered", "success" => true)
+
+    elseif opcode == 0x93  # RELAPSE -- requires a prior recorded recovery for that patient
+        id = get(args, :id, "relapse-$(length(vm.relapses) + 1)")
+        patient_id = get(args, :patient_id, "")
+        haskey(vm.recoveries, patient_id) || return Dict("error" => "no recovery on record for: $patient_id", "success" => false)
+        vm.relapses[id] = Dict{Symbol, Any}(:id => id, :patient_id => patient_id, :condition => vm.recoveries[patient_id][:condition])
+        delete!(vm.recoveries, patient_id)
+        return Dict("relapse" => id, "success" => true)
+
+    else
+        return Dict("error" => "unreachable: opcode not in 0x8f-0x93", "success" => false)
+    end
+end
+
+function handle_hospital(vm::VMState, opcode::UInt8, args)::Any
+    if opcode in 0x80:0x84
+        return handle_hospital_1(vm, opcode, args)
+    elseif opcode in 0x85:0x89
+        return handle_hospital_2(vm, opcode, args)
+    elseif opcode in 0x8a:0x8e
+        return handle_hospital_3(vm, opcode, args)
+    elseif opcode in 0x8f:0x93
+        return handle_hospital_4(vm, opcode, args)
     end
 end
 
@@ -1475,6 +1724,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     # TechGnØŞ.EXE Church cluster (real stateful tracking, not decorative)
     elseif opcode in 0x60:0x78  # TechGnØŞ.EXE Church cluster
         return handle_church(vm, opcode, args)
+
+    # SimaaS Hospital cluster (real stateful tracking, not decorative)
+    elseif opcode in 0x80:0x93  # SimaaS Hospital cluster
+        return handle_hospital(vm, opcode, args)
 
     # Òrìṣà spiritual attributes (invocations)
     elseif opcode == 0xa0  # ORISA_OBATALA
