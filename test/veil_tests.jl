@@ -8,6 +8,31 @@
     - Integration (composition chains, FFI calls)
 """
 
+# KNOWN RED, TRACKED GAP (2026-08-13): this file was fixed to correctly
+# call the real execute_veil() API (VeilExecutionContext struct, not a
+# Dict -- see src/veil_executor.jl) and correctly detects a real,
+# separate, much bigger gap: load_ffi_implementation() in
+# veil_executor.jl has NO real per-veil implementations anywhere in this
+# repo (confirmed: FFI_REGISTRY is never populated by anything, grepped
+# src/ and ffi/ for real entries -- zero hits). Every one of the 777
+# veils, across every tier sampled (Classical/ML/Signal/Robotics/First
+# Canon/Quantum), falls through to create_stub_implementation() and
+# returns the identical decorative shape
+# {veil_id, status: "success", language, result: "stub_output_for_veil_N"}
+# -- no real PID/Kalman/LQR/FFT/kinematics/quantum-gate math anywhere.
+#
+# This is a SEPARATE, much larger gap than the 155-opcode OSOVM VM stub
+# gap (closed 2026-08-12/13) -- that was VM opcode dispatch; this is the
+# 777-veil FFI execution layer, spanning multiple languages
+# (Julia/Rust/Python per the architecture docs). Real work: implement
+# actual math/physics/ML/DSP per veil, wire each into FFI_REGISTRY.
+# Deliberately NOT started here -- scoped, tracked, not attempted
+# unprompted. This file's remaining failures (Classical Systems veils
+# 1-3, and likely most/all of the other 5 tiers once they get a chance
+# to run past the first failing @testset) are the test correctly
+# catching this, not a test bug -- do not weaken these assertions to
+# accept stub output; that would hide the gap instead of surfacing it.
+
 include(joinpath(@__DIR__, "..", "src", "veils_777.jl"))
 include(joinpath(@__DIR__, "..", "src", "veil_index.jl"))
 include(joinpath(@__DIR__, "..", "src", "veil_executor.jl"))
@@ -18,6 +43,7 @@ module VeilTests
 
 using Test
 using Statistics
+using LinearAlgebra
 import Main.Veils777: VeilDefinition, get_veil, list_veils_by_tier
 import Main.VeilIndex: lookup_veil, search_veils, veil_by_tier
 import Main.VeilExecutor: execute_veil, execute_veil_composition
@@ -39,7 +65,7 @@ export run_all_tests, run_phase_tests
             Dict("target" => 10.0, "current" => 5.0, "dt" => 0.01)
         )
         # Check control output is numeric and reasonable
-        haskey(result, "output") && isa(result["output"], Number)
+        result.status == "success" && haskey(result.output, "output") && isa(result.output["output"], Number)
     end
     
     # Veil 2: Kalman Filter
@@ -48,7 +74,7 @@ export run_all_tests, run_phase_tests
             Dict("Q" => 0.1, "R" => 0.05, "x0" => 5.0),
             Dict("z" => 5.2)
         )
-        haskey(result, "state_estimate") && isa(result["state_estimate"], Number)
+        result.status == "success" && haskey(result.output, "state_estimate") && isa(result.output["state_estimate"], Number)
     end
     
     # Veil 3: LQR Control
@@ -61,7 +87,7 @@ export run_all_tests, run_phase_tests
             Dict("A" => A, "B" => B, "Q" => Q, "R" => R),
             Dict("state" => [1.0, 0.0])
         )
-        haskey(result, "K") && size(result["K"], 2) == 2
+        result.status == "success" && haskey(result.output, "K") && size(result.output["K"], 2) == 2
     end
     
     # Batch test remaining classical veils (4-25)
@@ -70,7 +96,7 @@ export run_all_tests, run_phase_tests
             veil_def = lookup_veil(veil_id)
             result = execute_veil(veil_id, Dict(), Dict())
             # Should return a result dict without error
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
@@ -89,7 +115,7 @@ end
             Dict("lr" => 0.01, "iterations" => 10),
             Dict("X" => X_train, "y" => y_train)
         )
-        haskey(result, "theta") && haskey(result, "loss_history")
+        result.status == "success" && haskey(result.output, "theta") && haskey(result.output, "loss_history")
     end
     
     # Veil 31: Cross-Entropy Loss
@@ -100,7 +126,7 @@ end
             Dict("reduction" => "mean"),
             Dict("predictions" => logits, "targets" => targets)
         )
-        0 <= result["loss"] <= 10  # Reasonable loss range
+        result.status == "success" && 0 <= result.output["loss"] <= 10  # Reasonable loss range
     end
     
     # Veil 34: Precision, Recall, F1
@@ -111,7 +137,7 @@ end
             Dict("threshold" => 0.5),
             Dict("predictions" => predictions, "targets" => targets)
         )
-        (0 <= result["precision"] <= 1) && (0 <= result["f1_score"] <= 1)
+        result.status == "success" && (0 <= result.output["precision"] <= 1) && (0 <= result.output["f1_score"] <= 1)
     end
     
     # Veil 42: Adam Optimizer
@@ -122,14 +148,14 @@ end
             Dict("lr" => 0.001, "beta1" => 0.9, "beta2" => 0.999),
             Dict("gradients" => gradients, "weights" => weights, "t" => 1)
         )
-        haskey(result, "weights") && length(result["weights"]) == 10
+        result.status == "success" && haskey(result.output, "weights") && length(result.output["weights"]) == 10
     end
     
     # Batch test remaining ML/AI veils
     for veil_id in [27, 28, 29, 30, 32, 33, 35, 41, 43, 51, 52, 61, 62, 71, 72]
         @test begin
             result = execute_veil(veil_id, Dict(), Dict())
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
@@ -147,7 +173,7 @@ end
             Dict("algorithm" => "cooley_tukey", "normalize" => true),
             Dict("signal" => signal)
         )
-        haskey(result, "fft") && haskey(result, "magnitude")
+        result.status == "success" && haskey(result.output, "fft") && haskey(result.output, "magnitude")
     end
     
     # Veil 78: Power Spectral Density
@@ -157,7 +183,7 @@ end
             Dict("method" => "welch", "nperseg" => 256),
             Dict("signal" => signal, "fs" => 1000)
         )
-        haskey(result, "power_spectrum") && length(result["power_spectrum"]) > 0
+        result.status == "success" && haskey(result.output, "power_spectrum") && length(result.output["power_spectrum"]) > 0
     end
     
     # Veil 81: FIR Filter
@@ -166,7 +192,7 @@ end
             Dict("filter_type" => "lowpass", "order" => 128, "critical_freq" => 0.3),
             Dict("fs" => 1000)
         )
-        haskey(result, "coefficients") && length(result["coefficients"]) > 0
+        result.status == "success" && haskey(result.output, "coefficients") && length(result.output["coefficients"]) > 0
     end
     
     # Veil 86: Continuous Wavelet Transform
@@ -177,14 +203,14 @@ end
             Dict("wavelet" => "morlet", "scales" => scales),
             Dict("signal" => signal, "fs" => 100)
         )
-        haskey(result, "coefficients") && haskey(result, "frequencies")
+        result.status == "success" && haskey(result.output, "coefficients") && haskey(result.output, "frequencies")
     end
     
     # Batch test remaining signal processing veils
     for veil_id in [77, 79, 80, 82, 83, 84, 85, 87, 88, 89, 90, 91, 95, 96, 97]
         @test begin
             result = execute_veil(veil_id, Dict(), Dict())
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
@@ -203,7 +229,7 @@ end
             Dict("robot_type" => "simple", "dh_params" => dh_params),
             Dict("joint_angles" => joint_angles)
         )
-        haskey(result, "position") && length(result["position"]) == 3
+        result.status == "success" && haskey(result.output, "position") && length(result.output["position"]) == 3
     end
     
     # Veil 111: Analytical IK
@@ -212,7 +238,7 @@ end
             Dict("arm_type" => "puma_like"),
             Dict("target_pose" => [0.5, 0.5, 0.3])
         )
-        haskey(result, "joint_configs")
+        result.status == "success" && haskey(result.output, "joint_configs")
     end
     
     # Veil 116: Jacobian Computation
@@ -222,7 +248,7 @@ end
             Dict("method" => "geometric"),
             Dict("joint_angles" => joint_angles)
         )
-        haskey(result, "jacobian") && size(result["jacobian"]) == (6, 6)
+        result.status == "success" && haskey(result.output, "jacobian") && size(result.output["jacobian"]) == (6, 6)
     end
     
     # Veil 121: Point-to-Point Trajectory
@@ -231,14 +257,14 @@ end
             Dict("trajectory_type" => "quintic", "duration" => 5.0),
             Dict("start" => zeros(6), "goal" => ones(6))
         )
-        haskey(result, "trajectory") && length(result["trajectory"]) > 0
+        result.status == "success" && haskey(result.output, "trajectory") && length(result.output["trajectory"]) > 0
     end
     
     # Batch test remaining robotics veils
     for veil_id in [101, 102, 103, 104, 105, 107, 108, 109, 110, 112, 113, 114, 115, 117, 118, 119, 120, 122, 123, 124, 125]
         @test begin
             result = execute_veil(veil_id, Dict(), Dict())
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
@@ -255,7 +281,7 @@ end
             Dict("binary_state" => 0b10100110, "oracle" => true),
             Dict()
         )
-        haskey(result, "odù_index") && haskey(result, "meaning")
+        result.status == "success" && haskey(result.output, "odù_index") && haskey(result.output, "meaning")
     end
     
     # Veil 403: Mathematical Constants
@@ -264,7 +290,7 @@ end
             Dict("constant_type" => "golden_ratio"),
             Dict()
         )
-        φ = result_φ["value"]
+        φ = (result_φ.status == "success" ? result_φ.output["value"] : NaN)
         @test 1.618 < φ < 1.619  # Golden ratio within tolerance
     end
     
@@ -273,7 +299,7 @@ end
             Dict("constant_type" => "pi"),
             Dict()
         )
-        π = result_π["value"]
+        π = (result_π.status == "success" ? result_π.output["value"] : NaN)
         @test 3.141 < π < 3.142  # Pi within tolerance
     end
     
@@ -283,7 +309,7 @@ end
             Dict("frequency_type" => "schumann"),
             Dict()
         )
-        schumann = result["hz"]
+        schumann = (result.status == "success" ? result.output["hz"] : NaN)
         @test 7.8 < schumann < 7.9  # Schumann frequency
     end
     
@@ -291,7 +317,7 @@ end
     for veil_id in [402, 404, 405, 406, 408, 409, 410, 411, 412, 413]
         @test begin
             result = execute_veil(veil_id, Dict(), Dict())
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
@@ -308,7 +334,7 @@ end
             Dict("num_qubits" => 5, "initialization_type" => "zero_state"),
             Dict()
         )
-        haskey(result, "state_vector") && length(result["state_vector"]) == 32  # 2^5 states
+        result.status == "success" && haskey(result.output, "state_vector") && length(result.output["state_vector"]) == 32  # 2^5 states
     end
     
     # Veil 503: Quantum Measurement
@@ -317,7 +343,7 @@ end
             Dict("observable" => "pauli_z", "num_shots" => 1000),
             Dict()
         )
-        haskey(result, "measurement_results") && haskey(result, "probabilities")
+        result.status == "success" && haskey(result.output, "measurement_results") && haskey(result.output, "probabilities")
     end
     
     # Veil 511: Pauli Gates
@@ -326,7 +352,7 @@ end
             Dict("gate_sequence" => ["X", "Y", "Z"]),
             Dict()
         )
-        haskey(result, "states_after_gates")
+        result.status == "success" && haskey(result.output, "states_after_gates")
     end
     
     # Veil 531: VQE
@@ -335,14 +361,14 @@ end
             Dict("optimizer" => "cobyla", "max_iterations" => 10),
             Dict()
         )
-        haskey(result, "optimal_parameters") && haskey(result, "eigenvalue")
+        result.status == "success" && haskey(result.output, "optimal_parameters") && haskey(result.output, "eigenvalue")
     end
     
     # Batch test remaining quantum veils
     for veil_id in [502, 504, 505, 506, 507, 508, 509, 510, 512, 513, 514, 515, 516, 517, 520, 521, 525, 531, 542, 545]
         @test begin
             result = execute_veil(veil_id, Dict(), Dict())
-            isa(result, Dict)
+            result isa Main.VeilExecutor.VeilExecutionContext
         end
     end
 end
