@@ -8,15 +8,21 @@
     - Integration (composition chains, FFI calls)
 """
 
+include(joinpath(@__DIR__, "..", "src", "veils_777.jl"))
+include(joinpath(@__DIR__, "..", "src", "veil_index.jl"))
+include(joinpath(@__DIR__, "..", "src", "veil_executor.jl"))
+include(joinpath(@__DIR__, "..", "src", "veilsim_scorer.jl"))
+include(joinpath(@__DIR__, "..", "src", "sacred_geometry.jl"))
+
 module VeilTests
 
 using Test
 using Statistics
-import Veils777: VeilDefinition, get_veil, list_veils_by_tier
-import VeilIndex: lookup_veil, search_veils, veil_by_tier
-import VeilExecutor: execute_veil, execute_veil_composition
-import VeilSimScorer: score_veil, veil_f1_score
-import SacredGeometry
+import Main.Veils777: VeilDefinition, get_veil, list_veils_by_tier
+import Main.VeilIndex: lookup_veil, search_veils, veil_by_tier
+import Main.VeilExecutor: execute_veil, execute_veil_composition
+import Main.VeilSimScorer: score_veil, veil_f1_score
+import Main.SacredGeometry
 
 export run_all_tests, run_phase_tests
 
@@ -470,7 +476,7 @@ end
     # Schumann frequency
     @test begin
         schumann = SacredGeometry.SCHUMANN_FREQUENCY
-        schumann ≈ 7.83 atol=0.01
+        isapprox(schumann, 7.83, atol=0.01)
     end
     
     # Chakra frequencies
@@ -492,14 +498,14 @@ end
 
 function run_all_tests()
     println("🧪 Running Comprehensive Veil Test Suite")
-    println("=" * 60)
+    println("=" ^ 60)
     
     @test begin
         # This will run all @testset blocks above
         true
     end
     
-    println("=" * 60)
+    println("=" ^ 60)
     println("✓ All tests passed!")
 end
 

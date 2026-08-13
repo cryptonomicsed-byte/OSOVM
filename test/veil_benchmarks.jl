@@ -9,12 +9,17 @@
     - Scaling with complexity
 """
 
+include(joinpath(@__DIR__, "..", "src", "veil_executor.jl"))
+include(joinpath(@__DIR__, "..", "src", "veil_index.jl"))
+
 module VeilBenchmarks
 
 using BenchmarkTools
+using Dates
 using Statistics
-import VeilExecutor: execute_veil, execute_veil_composition
-import VeilIndex: lookup_veil, veil_by_tier
+using LinearAlgebra
+import Main.VeilExecutor: execute_veil, execute_veil_composition
+import Main.VeilIndex: lookup_veil, veil_by_tier
 
 export benchmark_all_veils, benchmark_composition, benchmark_report
 
@@ -32,7 +37,7 @@ const SECONDS_LIMIT = 60.0
 
 function benchmark_classical_systems()
     println("\n🎛️ Classical Systems Benchmarks (Veils 1-25)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -57,8 +62,7 @@ function benchmark_classical_systems()
     
     # Sample remaining veils (4-25)
     for veil_id in [4, 5, 6, 10, 15, 20, 25]
-        results[veil_id] = @benchmark execute_veil($veil_id, Dict(), Dict()) \
-            samples=SAMPLES evals=EVALS seconds=SECONDS_LIMIT
+        results[veil_id] = @benchmark execute_veil($veil_id, Dict(), Dict()) samples=SAMPLES evals=EVALS seconds=SECONDS_LIMIT
     end
     
     # Report
@@ -77,7 +81,7 @@ end
 
 function benchmark_ml_ai_systems()
     println("\n🧠 ML & AI Systems Benchmarks (Veils 26-75)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -136,7 +140,7 @@ end
 
 function benchmark_signal_processing()
     println("\n🔊 Signal Processing Benchmarks (Veils 76-100)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -185,7 +189,7 @@ end
 
 function benchmark_robotics()
     println("\n🤖 Robotics Benchmarks (Veils 101-125)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -230,7 +234,7 @@ end
 
 function benchmark_first_canon()
     println("\n🤍 First Canon Benchmarks (Veils 401-413)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -272,7 +276,7 @@ end
 
 function benchmark_quantum()
     println("\n⚛️ Quantum Benchmarks (Veils 501-550)")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
@@ -318,37 +322,32 @@ end
 
 function benchmark_composition()
     println("\n🔗 Composition Benchmarks")
-    println("-" * 60)
+    println("-" ^ 60)
     
     results = Dict()
     
     # 2-veil composition (minimal overhead)
     results["2-Veil"] = @benchmark execute_veil_composition([1, 2],
-        Dict("Kp" => 1.0, "Ki" => 0.1, "Kd" => 0.01),
-        Dict("target" => 10.0, "current" => 5.0)
+        Dict("Kp" => 1.0, "Ki" => 0.1, "Kd" => 0.01, "target" => 10.0, "current" => 5.0)
     ) samples=50 evals=5 seconds=SECONDS_LIMIT
     
     # 5-veil composition
     results["5-Veil"] = @benchmark execute_veil_composition([1, 2, 3, 4, 5],
-        Dict(),
         Dict()
     ) samples=30 evals=3 seconds=SECONDS_LIMIT
     
     # 10-veil composition (stress test)
-    results["10-Veil"] = @benchmark execute_veil_composition(1:10,
-        Dict(),
+    results["10-Veil"] = @benchmark execute_veil_composition(collect(1:10),
         Dict()
     ) samples=10 evals=1 seconds=SECONDS_LIMIT
     
     # Mixed FFI composition (Julia + Rust + Python)
     results["Mixed-FFI"] = @benchmark execute_veil_composition([1, 3, 26],
-        Dict(),
         Dict()
     ) samples=10 evals=1 seconds=SECONDS_LIMIT
     
     # Sacred Canon composition (401-413)
     results["Sacred-Canon"] = @benchmark execute_veil_composition([401, 403, 407, 410],
-        Dict(),
         Dict()
     ) samples=10 evals=1 seconds=SECONDS_LIMIT
     
@@ -368,9 +367,9 @@ end
 # ============================================================================
 
 function benchmark_report()
-    println("=" * 60)
+    println("=" ^ 60)
     println("🧪 COMPREHENSIVE VEIL SYSTEM BENCHMARK REPORT")
-    println("=" * 60)
+    println("=" ^ 60)
     println("Date: $(now())")
     println("Samples: $SAMPLES, Evals: $EVALS, Time limit: $(Int(SECONDS_LIMIT))s")
     
@@ -384,9 +383,9 @@ function benchmark_report()
     composition_results = benchmark_composition()
     
     # Summary statistics
-    println("\n" * "=" * 60)
+    println("\n" * "=" ^ 60)
     println("SUMMARY STATISTICS")
-    println("=" * 60)
+    println("=" ^ 60)
     
     all_times = vcat(
         [median(r.times) / 1e6 for r in values(classical_results)],
@@ -412,9 +411,9 @@ function benchmark_report()
     println("  Mean: $(round(mean(comp_times); digits=3))ms")
     
     # Performance targets
-    println("\n" * "=" * 60)
+    println("\n" * "=" ^ 60)
     println("PERFORMANCE TARGETS (SUCCESS CRITERIA)")
-    println("=" * 60)
+    println("=" ^ 60)
     
     single_veil_target = 10.0  # ms
     composition_target = 50.0  # ms
@@ -425,9 +424,9 @@ function benchmark_report()
     println("Single veil execution < $(single_veil_target)ms: $(single_veil_pass ? "✓ PASS" : "✗ FAIL")")
     println("Composition < $(composition_target)ms: $(composition_pass ? "✓ PASS" : "✗ FAIL")")
     
-    println("\n" * "=" * 60)
+    println("\n" * "=" ^ 60)
     println("Benchmarks complete. All results logged.")
-    println("=" * 60)
+    println("=" ^ 60)
 end
 
 function benchmark_all_veils()
@@ -436,3 +435,7 @@ function benchmark_all_veils()
 end
 
 end  # module VeilBenchmarks
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    VeilBenchmarks.benchmark_all_veils()
+end

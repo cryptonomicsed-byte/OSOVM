@@ -21,29 +21,29 @@ const π = Base.π  # ≈ 3.141592653589...
 const e = Base.MathConstants.e  # ≈ 2.718281828459...
 
 """Catalan's Constant (G)"""
-const G_catalan = 0.91596559417721901505...
+const G_catalan = 0.915965594177219015
 
 """Euler-Mascheroni Constant (γ) - Harmonic series limit"""
-const γ_euler = 0.5772156649015328606...
+const γ_euler = 0.5772156649015328606
 
 """Apéry's Constant (ζ(3))"""
-const ζ3 = 1.202056903159594...
+const ζ3 = 1.202056903159594
 
 # ============================================================================
 # SQUARE ROOTS - FUNDAMENTAL IRRATIONALS
 # ============================================================================
 
 """√2 - Diagonal of unit square"""
-const √2 = sqrt(2)  # ≈ 1.414213562373...
+const SQRT2 = sqrt(2)  # ≈ 1.414213562373...
 
 """√3 - Height of equilateral triangle"""
-const √3 = sqrt(3)  # ≈ 1.732050807568...
+const SQRT3 = sqrt(3)  # ≈ 1.732050807568...
 
 """√5 - Related to golden ratio"""
-const √5 = sqrt(5)  # ≈ 2.236067977499...
+const SQRT5 = sqrt(5)  # ≈ 2.236067977499...
 
 """√φ - Golden ratio square root"""
-const √φ = sqrt(φ)
+const SQRT_PHI = sqrt(φ)
 
 """1/φ - Reciprocal golden ratio"""
 const φ_inv = 1 / φ  # ≈ 0.618033988749...
@@ -300,19 +300,19 @@ const YGGDRASIL_REALMS = 9
 # ============================================================================
 
 """Feigenbaum constant (δ) - onset of chaos"""
-const FEIGENBAUM_δ = 4.66920160910299...
+const FEIGENBAUM_δ = 4.66920160910299
 
 """Feigenbaum constant (α) - bifurcation scaling"""
-const FEIGENBAUM_α = 2.50290787509589...
+const FEIGENBAUM_α = 2.50290787509589
 
 """Khinchin's constant"""
-const KHINCHIN = 2.6854520010...
+const KHINCHIN = 2.6854520010
 
 """Glaisher–Kinkelin constant"""
-const GLAISHER_KINKELIN = 1.28242712...
+const GLAISHER_KINKELIN = 1.28242712
 
 """Omega constant (W(1))"""
-const OMEGA = 0.56714329040726...
+const OMEGA = 0.56714329040726
 
 # ============================================================================
 # E₈ LATTICE & EXCEPTIONAL GROUPS

@@ -195,7 +195,7 @@ for (i, f1) in enumerate(f1_values)
         Dict{String,String}()
     )
     if result !== nothing
-        accepted_count += 1
+        global accepted_count += 1
     end
 end
 

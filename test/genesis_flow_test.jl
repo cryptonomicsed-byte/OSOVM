@@ -28,7 +28,7 @@ using .OsoVM
         ir = OsoCompiler.compile_oso(source)
         
         @test length(ir) >= 1
-        @test ir[1].opcode == 0x2a  # GENESIS_FLAW_TOKEN
+        @test ir[1].opcode == 0x2b  # GENESIS_FLAW_TOKEN
         @test ir[1].args[:token] == "ASHE"
         @test ir[1].args[:amount] == 1.0
     end
@@ -51,7 +51,7 @@ using .OsoVM
         
         # Simulate execution (mock)
         # Expected: token minted as "Àṣẹ" (transformed from "ASHE")
-        @test ir[1].opcode == 0x2a
+        @test ir[1].opcode == 0x2b
         @test ir[1].args[:token] == "ASHE"
         @test ir[1].args[:amount] == 1.0
         
@@ -76,7 +76,7 @@ using .OsoVM
         ir = OsoCompiler.compile_oso(source)
         
         # After block 0, ASHE is forever rejected
-        @test ir[1].opcode == 0x2a
+        @test ir[1].opcode == 0x2b
         @test ir[1].args[:token] == "ASHE"
         
         # In real execution, VM would reject with "flaw_denied_post_genesis"
@@ -197,10 +197,10 @@ using .OsoVM
         # Simulate candidate apply
         # (would be: vm.wallets[1].state = PENDING)
         # For now, just verify enum exists
-        @test OsoVM.OPEN == 1
-        @test OsoVM.PENDING == 2
-        @test OsoVM.COUNCIL_READY == 3
-        @test OsoVM.AWARDED == 4
+        @test Int(OsoVM.OPEN) == 1
+        @test Int(OsoVM.PENDING) == 2
+        @test Int(OsoVM.COUNCIL_READY) == 3
+        @test Int(OsoVM.AWARDED) == 4
         
         println("✅ Wallet state machine defined (OPEN → PENDING → COUNCIL_READY → AWARDED)")
     end

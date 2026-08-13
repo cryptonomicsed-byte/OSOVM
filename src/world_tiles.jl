@@ -10,7 +10,7 @@ using Statistics
 
 export WorldTile, SimRecord, SimLibrary
 export create_tile, tile_key, tiles_in_range
-export submit_simulation, query_simulations, consume_simulation
+export submit_simulation, query_simulations, query_by_veil, consume_simulation
 export compute_sim_value, library_stats
 
 # ============================================================================
