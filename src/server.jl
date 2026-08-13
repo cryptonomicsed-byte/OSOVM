@@ -58,7 +58,7 @@ end
 
 function handle_create_vm(req::HTTP.Request)
     body = Dict{String, Any}()
-    if !isempty(req.body)
+    if !isempty(String(req.body))
         try
             body = JSON.parse(String(req.body))
         catch e
