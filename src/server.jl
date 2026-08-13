@@ -65,6 +65,181 @@ const IDENTITY_REGISTRY = Dict{String, Dict{String, Any}}()
 const IDENTITY_REVERSE = Dict{String, String}()
 const IDENTITY_LOCK = ReentrantLock()
 
+# ============ Published API schema (OpenAPI 3.0) ============
+# Closes gap #4 from the ecosystem-alignment orchestration (round 3):
+# "No published data contract for OSOVM's output. The only externally-
+# meaningful shape OSOVM exposes is the CLI's JSON contract, and exactly
+# one file in the entire ecosystem (rlm-osovm.ts) knows that shape.
+# Every consumer would have to reverse-engineer the CLI's stdout format
+# from scratch." This is that published contract.
+#
+# Follows the SAME convention Vantage already uses for itself (its own
+# playbook: "Schema of truth: GET /openapi.json (public)") -- this isn't
+# a new pattern invented for OSOVM, it's OSOVM adopting the one already
+# real elsewhere in this ecosystem, so a consumer who already knows how
+# to read Vantage's schema knows how to read this one too.
+#
+# Defined as a plain Dict literal, in the same file/language as the
+# handlers it describes -- no separate build step, no drift between
+# "what the schema says" and "what the code does" because there's only
+# one place either could be edited.
+const OPENAPI_SCHEMA = Dict{String, Any}(
+    "openapi" => "3.0.3",
+    "info" => Dict(
+        "title" => "OSOVM API",
+        "version" => "1.0.0",
+        "description" => "Ọ̀ṢỌ́ VM HTTP server -- deterministic simulation-proof VM. " *
+                          "Published contract for the JSON shapes every endpoint returns, " *
+                          "so no consumer has to reverse-engineer them from a live response.",
+    ),
+    "paths" => Dict(
+        "/v1/health" => Dict("get" => Dict(
+            "summary" => "Liveness check",
+            "responses" => Dict("200" => Dict("description" => "Server is up",
+                "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/HealthResponse"))))),
+        )),
+        "/v1/vm" => Dict("post" => Dict(
+            "summary" => "Create a persistent VM instance",
+            "requestBody" => Dict("content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/CreateVmRequest")))),
+            "responses" => Dict("201" => Dict("description" => "VM created",
+                "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/CreateVmResponse"))))),
+        )),
+        "/v1/vm/{vm_id}" => Dict("get" => Dict(
+            "summary" => "Inspect VM state",
+            "parameters" => [Dict("name" => "vm_id", "in" => "path", "required" => true, "schema" => Dict("type" => "string"))],
+            "responses" => Dict(
+                "200" => Dict("description" => "VM state",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/VmStateResponse")))),
+                "404" => Dict("description" => "Unknown vm_id",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+            ),
+        )),
+        "/v1/vm/{vm_id}/execute" => Dict("post" => Dict(
+            "summary" => "Execute one instruction against a VM",
+            "parameters" => [Dict("name" => "vm_id", "in" => "path", "required" => true, "schema" => Dict("type" => "string"))],
+            "requestBody" => Dict("content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ExecuteRequest")))),
+            "responses" => Dict(
+                "200" => Dict("description" => "Instruction succeeded",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ExecuteResponse")))),
+                "400" => Dict("description" => "Bad request (unknown opcode, malformed JSON)",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+                "404" => Dict("description" => "Unknown vm_id",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+                "422" => Dict("description" => "Real application-level rejection (e.g. double-vote, insufficient collateral) -- not a transport failure",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ExecuteResponse")))),
+                "500" => Dict("description" => "Real unhandled server error",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+            ),
+        )),
+        "/v1/identity" => Dict("post" => Dict(
+            "summary" => "Derive/register a canonical cross-pillar identity",
+            "requestBody" => Dict("content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/CreateIdentityRequest")))),
+            "responses" => Dict("201" => Dict("description" => "Canonical identity (deterministic on seed+path)",
+                "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/CreateIdentityResponse"))))),
+        )),
+        "/v1/identity/{canonical_id}" => Dict("get" => Dict(
+            "summary" => "Get all pillar links for a canonical identity",
+            "parameters" => [Dict("name" => "canonical_id", "in" => "path", "required" => true, "schema" => Dict("type" => "string"))],
+            "responses" => Dict(
+                "200" => Dict("description" => "Identity found",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/IdentityResponse")))),
+                "404" => Dict("description" => "Unknown canonical_id",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+            ),
+        )),
+        "/v1/identity/{canonical_id}/link" => Dict("post" => Dict(
+            "summary" => "Link a pillar-native ID to a canonical identity",
+            "parameters" => [Dict("name" => "canonical_id", "in" => "path", "required" => true, "schema" => Dict("type" => "string"))],
+            "requestBody" => Dict("content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/LinkIdentityRequest")))),
+            "responses" => Dict(
+                "200" => Dict("description" => "Linked",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/LinkIdentityResponse")))),
+                "404" => Dict("description" => "Unknown canonical_id",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+                "409" => Dict("description" => "pillar_id already linked to a DIFFERENT canonical_id (hijack prevention)",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/LinkIdentityResponse")))),
+            ),
+        )),
+        "/v1/identity/lookup" => Dict("get" => Dict(
+            "summary" => "Reverse lookup: pillar+pillar_id -> canonical identity",
+            "parameters" => [
+                Dict("name" => "pillar", "in" => "query", "required" => true, "schema" => Dict("type" => "string")),
+                Dict("name" => "pillar_id", "in" => "query", "required" => true, "schema" => Dict("type" => "string")),
+            ],
+            "responses" => Dict(
+                "200" => Dict("description" => "Found",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/IdentityResponse")))),
+                "404" => Dict("description" => "No canonical identity linked to that pillar+pillar_id",
+                    "content" => Dict("application/json" => Dict("schema" => Dict("\$ref" => "#/components/schemas/ErrorResponse")))),
+            ),
+        )),
+    ),
+    "components" => Dict("schemas" => Dict(
+        "HealthResponse" => Dict("type" => "object", "required" => ["status", "service", "active_vms"], "properties" => Dict(
+            "status" => Dict("type" => "string", "enum" => ["ok"]),
+            "service" => Dict("type" => "string"),
+            "active_vms" => Dict("type" => "integer"),
+        )),
+        "CreateVmRequest" => Dict("type" => "object", "properties" => Dict(
+            "final_signer" => Dict("type" => "string", "description" => "Address authorized to seal/veto/pardon; defaults to \"genesis\""),
+            "council" => Dict("type" => "array", "items" => Dict("type" => "string")),
+        )),
+        "CreateVmResponse" => Dict("type" => "object", "required" => ["vm_id", "final_signer", "council"], "properties" => Dict(
+            "vm_id" => Dict("type" => "string", "description" => "Opaque handle; persists this VM's state in server memory across calls"),
+            "final_signer" => Dict("type" => "string"),
+            "council" => Dict("type" => "array", "items" => Dict("type" => "string")),
+        )),
+        "VmStateResponse" => Dict("type" => "object", "required" => ["vm_id", "final_signer", "block_height", "block_time", "chain_id", "halted", "ase_balances"], "properties" => Dict(
+            "vm_id" => Dict("type" => "string"),
+            "final_signer" => Dict("type" => "string"),
+            "block_height" => Dict("type" => "integer"),
+            "block_time" => Dict("type" => "integer"),
+            "chain_id" => Dict("type" => "string"),
+            "halted" => Dict("type" => "boolean"),
+            "ase_balances" => Dict("type" => "object", "additionalProperties" => Dict("type" => "number"), "description" => "wallet address -> Àṣẹ balance"),
+        )),
+        "ExecuteRequest" => Dict("type" => "object", "required" => ["opcode"], "properties" => Dict(
+            "opcode" => Dict("type" => "string", "description" => "One of the 155 Sacred Attributes (25 Core + 130 Expansion), e.g. \"PROPOSAL\", \"LOAN\", \"BALANCE\""),
+            "agent" => Dict("type" => "string", "description" => "Sender address for this instruction; defaults to \"genesis\""),
+            "args" => Dict("type" => "object", "description" => "Opcode-specific arguments; shape varies per opcode"),
+        )),
+        "ExecuteResponse" => Dict("type" => "object", "required" => ["vm_id", "vm_task_hash", "status", "vm_result", "sender_balance"], "properties" => Dict(
+            "vm_id" => Dict("type" => "string"),
+            "vm_task_hash" => Dict("type" => "string"),
+            "status" => Dict("type" => "string", "enum" => ["success", "failed"]),
+            "vm_result" => Dict("type" => "object", "description" => "Opcode-specific result; always includes \"success\": boolean, and \"error\": string when success is false"),
+            "sender_balance" => Dict("type" => "number", "description" => "Real post-execution Àṣẹ balance of the sending agent"),
+        )),
+        "ErrorResponse" => Dict("type" => "object", "required" => ["status", "error"], "properties" => Dict(
+            "status" => Dict("type" => "string", "enum" => ["error"]),
+            "error" => Dict("type" => "string"),
+            "stacktrace" => Dict("type" => "array", "items" => Dict("type" => "string"), "description" => "Only present on real unhandled 500s"),
+        )),
+        "CreateIdentityRequest" => Dict("type" => "object", "required" => ["seed", "path"], "properties" => Dict(
+            "seed" => Dict("type" => "string"),
+            "path" => Dict("type" => "string"),
+        )),
+        "CreateIdentityResponse" => Dict("type" => "object", "required" => ["canonical_id"], "properties" => Dict(
+            "canonical_id" => Dict("type" => "string", "description" => "sha256(seed:path) hex -- deterministic; same seed+path always returns the same canonical_id"),
+        )),
+        "LinkIdentityRequest" => Dict("type" => "object", "required" => ["pillar", "pillar_id"], "properties" => Dict(
+            "pillar" => Dict("type" => "string", "description" => "e.g. \"witness_secp256k1\", \"witness_rns\", \"vantage\", \"sui\", \"omokoda\""),
+            "pillar_id" => Dict("type" => "string", "description" => "That pillar's native identifier (pubkey, address, account name, ...)"),
+        )),
+        "LinkIdentityResponse" => Dict("type" => "object", "required" => ["success"], "properties" => Dict(
+            "success" => Dict("type" => "boolean"),
+            "canonical_id" => Dict("type" => "string"),
+            "pillar" => Dict("type" => "string"),
+            "pillar_id" => Dict("type" => "string"),
+            "error" => Dict("type" => "string", "description" => "Present when success is false, e.g. hijack-prevention rejection"),
+        )),
+        "IdentityResponse" => Dict("type" => "object", "required" => ["canonical_id", "pillars"], "properties" => Dict(
+            "canonical_id" => Dict("type" => "string"),
+            "pillars" => Dict("type" => "object", "additionalProperties" => Dict("type" => "string"), "description" => "pillar name -> that pillar's native ID, for every pillar linked to this canonical identity"),
+        )),
+    )),
+)
+
 function json_response(status::Int, body::Dict)
     return HTTP.Response(status, ["Content-Type" => "application/json"], JSON.json(body))
 end
@@ -332,6 +507,8 @@ function router(req::HTTP.Request)
     try
         if method == "GET" && path == "/v1/health"
             return handle_health(req)
+        elseif method == "GET" && path == "/v1/openapi.json"
+            return json_response(200, OPENAPI_SCHEMA)
         elseif method == "POST" && path == "/v1/vm"
             return handle_create_vm(req)
         elseif method == "GET" && length(parts) == 3 && parts[1] == "v1" && parts[2] == "vm"
@@ -361,6 +538,7 @@ function main()
     println("[OSOVM Server] Starting on 0.0.0.0:$PORT")
     println("[OSOVM Server] Routes:")
     println("  GET  /v1/health")
+    println("  GET  /v1/openapi.json           -- published API schema (OpenAPI 3.0)")
     println("  POST /v1/vm                    -- create a persistent VM instance")
     println("  GET  /v1/vm/{vm_id}             -- inspect VM state")
     println("  POST /v1/vm/{vm_id}/execute     -- execute one instruction against it")
