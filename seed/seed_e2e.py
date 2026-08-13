@@ -14,8 +14,20 @@ Agents are reused from a cached keyfile (/root/.e2e_keys.json on the VPS) so no 
 import subprocess, json, sys, re
 
 VPS = "hostinger-vps"
-PKG = "0x3d5f61e9c5eef68a4fcfb1181a810616b5fb02663d20c854c623ebd3bdfd6c61"
-ROUTER = "0xcac8d795963f82405f396fac0740c3cf3e68fc4db3e87345a51099915bec9926"
+# Redeployed 2026-08-13: the original devnet package/router below were
+# confirmed GONE (object not found) when this script was re-verified --
+# Sui devnet resets periodically, and the original deployment didn't
+# survive one. Republished fresh (sui client test-publish --build-env
+# devnet) and re-created ElegbaraRouter<SUI> (sui client call
+# create_router), then re-proved the exact same settlement math live
+# (gross=100_000_000, tax=3_690_000 exactly 3.69%, net=96_310_000,
+# tx HpL6QAQ7S5uzhfTpwM3ycPsnsCNnkApTT842Z4mzo2vr) before updating these
+# constants. If this script fails again with "Object ... not found", the
+# same thing has happened again -- devnet is inherently ephemeral, which
+# is exactly why a public TESTNET deploy (needs one human faucet click,
+# see OSOVM_ECOSYSTEM_BRIEF.md) is the durable fix, not a workaround.
+PKG = "0xb79d1a3b3da87c3a15512bbb542e9a00ee1cfcb1c0234d36b62a043f44f9e91a"
+ROUTER = "0x00bb80c5c8638d252df74c31435b784f50d7a341f5da657fb375a9d49b403c60"
 SUI_T = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
 WORKER_ADDR = "0xd02ea140b30c6f16885d5b81d6b4f6bbc3b0585cec53ee6dbf901e77c185311f"
 PAYMENT_MIST = 100_000_000  # 0.1 SUI job payment
