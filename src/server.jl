@@ -38,6 +38,33 @@ const PORT = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 7778
 const VM_REGISTRY = Dict{String, OsoVM.VMState}()
 const VM_LOCK = ReentrantLock()
 
+# ============ Identity Registry ============
+# Closes gap #3 from the ecosystem-alignment orchestration (round 3):
+# "No shared identity registry across the four pillars." After this
+# session's work, there are FOUR separate keypair spaces with zero
+# cross-reference: Witness-firmware nodes (secp256k1 NIP-shaped + RNS
+# Ed25519), Omo-Koda2 agents (BIPON39-seed-derived), Vantage accounts
+# (its own registration), and OSOVM/Sui wallets. There was no table,
+# contract, or service anywhere that answered "given this Witness
+# node's pubkey, which Omo-Koda2 agent does it vouch for, and which Sui
+# wallet gets paid." This is that table.
+#
+# One canonical identity, N pillar-native IDs linked to it. The
+# canonical ID is derived the same way BIPON_SEED (opcode 0x26) already
+# derives child addresses -- sha256(seed:path) -- so a canonical
+# identity here is the SAME kind of deterministic derivation already
+# real elsewhere in this VM, not a new ad hoc ID scheme.
+#
+# canonical_id => {seed, path, pillars: {pillar_name => pillar_native_id}}
+const IDENTITY_REGISTRY = Dict{String, Dict{String, Any}}()
+# "pillar:pillar_id" => canonical_id, for O(1) reverse lookup and to
+# enforce the real invariant that a given pillar-native ID can only
+# ever be linked to ONE canonical identity (prevents identity confusion
+# / hijack -- without this, two different canonical identities could
+# both claim to speak for the same Witness node's pubkey).
+const IDENTITY_REVERSE = Dict{String, String}()
+const IDENTITY_LOCK = ReentrantLock()
+
 function json_response(status::Int, body::Dict)
     return HTTP.Response(status, ["Content-Type" => "application/json"], JSON.json(body))
 end
@@ -58,7 +85,7 @@ end
 
 function handle_create_vm(req::HTTP.Request)
     body = Dict{String, Any}()
-    if !isempty(String(req.body))
+    if !isempty(req.body)
         try
             body = JSON.parse(String(req.body))
         catch e
@@ -183,6 +210,118 @@ function handle_get_vm(req::HTTP.Request, vm_id::String)
     ))
 end
 
+# ============ Identity Registry handlers ============
+
+function handle_create_identity(req::HTTP.Request)
+    body = Dict{String, Any}()
+    if !isempty(req.body)
+        try
+            body = JSON.parse(String(req.body))
+        catch e
+            return error_response(400, "invalid JSON body: $(sprint(showerror, e))")
+        end
+    end
+
+    seed = get(body, "seed", "")
+    path = get(body, "path", "")
+    (isempty(seed) || isempty(path)) && return error_response(400, "seed and path required")
+
+    # Same derivation as BIPON_SEED (opcode 0x26): sha256(seed:path).
+    # Deterministic on purpose -- registering the same seed+path twice
+    # returns the SAME canonical_id rather than minting a duplicate
+    # identity, matching BIPON_SEED's own dedupe-by-path invariant.
+    canonical_id = bytes2hex(sha256("$seed:$path"))
+
+    lock(IDENTITY_LOCK) do
+        if !haskey(IDENTITY_REGISTRY, canonical_id)
+            IDENTITY_REGISTRY[canonical_id] = Dict{String, Any}(
+                "seed" => seed, "path" => path, "pillars" => Dict{String, String}(),
+            )
+        end
+    end
+
+    return json_response(201, Dict("canonical_id" => canonical_id))
+end
+
+function handle_link_identity(req::HTTP.Request, canonical_id::String)
+    local entry
+    lock(IDENTITY_LOCK) do
+        entry = get(IDENTITY_REGISTRY, canonical_id, nothing)
+    end
+    if entry === nothing
+        return error_response(404, "unknown canonical_id: $canonical_id")
+    end
+
+    local body
+    try
+        body = JSON.parse(String(req.body))
+    catch e
+        return error_response(400, "invalid JSON body: $(sprint(showerror, e))")
+    end
+
+    pillar = get(body, "pillar", "")
+    pillar_id = get(body, "pillar_id", "")
+    (isempty(pillar) || isempty(pillar_id)) && return error_response(400, "pillar and pillar_id required")
+
+    reverse_key = "$pillar:$pillar_id"
+
+    result = lock(IDENTITY_LOCK) do
+        # The real invariant: this pillar-native ID must not already be
+        # linked to a DIFFERENT canonical identity. Without this check,
+        # two agents could both claim the same Witness node's pubkey (or
+        # the same Sui wallet), which is exactly the identity-confusion
+        # failure mode this registry exists to prevent.
+        if haskey(IDENTITY_REVERSE, reverse_key) && IDENTITY_REVERSE[reverse_key] != canonical_id
+            return Dict("error" => "already linked to a different canonical_id: $(IDENTITY_REVERSE[reverse_key])", "success" => false)
+        end
+        existing_pillar_id = get(entry["pillars"], pillar, "")
+        if !isempty(existing_pillar_id) && existing_pillar_id != pillar_id
+            return Dict("error" => "canonical_id already has a different $pillar link: $existing_pillar_id", "success" => false)
+        end
+        entry["pillars"][pillar] = pillar_id
+        IDENTITY_REVERSE[reverse_key] = canonical_id
+        return Dict("canonical_id" => canonical_id, "pillar" => pillar, "pillar_id" => pillar_id, "success" => true)
+    end
+
+    ok = get(result, "success", false)
+    return json_response(ok ? 200 : 409, result)
+end
+
+function handle_get_identity(req::HTTP.Request, canonical_id::String)
+    local entry
+    lock(IDENTITY_LOCK) do
+        entry = get(IDENTITY_REGISTRY, canonical_id, nothing)
+    end
+    if entry === nothing
+        return error_response(404, "unknown canonical_id: $canonical_id")
+    end
+    return json_response(200, Dict(
+        "canonical_id" => canonical_id,
+        "pillars" => entry["pillars"],
+    ))
+end
+
+function handle_lookup_identity(req::HTTP.Request)
+    query = HTTP.URIs.queryparams(HTTP.URI(req.target))
+    pillar = get(query, "pillar", "")
+    pillar_id = get(query, "pillar_id", "")
+    (isempty(pillar) || isempty(pillar_id)) && return error_response(400, "pillar and pillar_id query params required")
+
+    reverse_key = "$pillar:$pillar_id"
+    local canonical_id, entry
+    lock(IDENTITY_LOCK) do
+        canonical_id = get(IDENTITY_REVERSE, reverse_key, nothing)
+        entry = canonical_id === nothing ? nothing : IDENTITY_REGISTRY[canonical_id]
+    end
+    if canonical_id === nothing
+        return error_response(404, "no canonical identity linked to $pillar:$pillar_id")
+    end
+    return json_response(200, Dict(
+        "canonical_id" => canonical_id,
+        "pillars" => entry["pillars"],
+    ))
+end
+
 # ============ Router ============
 
 function router(req::HTTP.Request)
@@ -199,6 +338,14 @@ function router(req::HTTP.Request)
             return handle_get_vm(req, String(parts[3]))
         elseif method == "POST" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "vm" && parts[4] == "execute"
             return handle_execute(req, String(parts[3]))
+        elseif method == "POST" && path == "/v1/identity"
+            return handle_create_identity(req)
+        elseif method == "GET" && path == "/v1/identity/lookup"
+            return handle_lookup_identity(req)
+        elseif method == "GET" && length(parts) == 3 && parts[1] == "v1" && parts[2] == "identity"
+            return handle_get_identity(req, String(parts[3]))
+        elseif method == "POST" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "identity" && parts[4] == "link"
+            return handle_link_identity(req, String(parts[3]))
         else
             return error_response(404, "no such route: $method $path")
         end
@@ -217,6 +364,10 @@ function main()
     println("  POST /v1/vm                    -- create a persistent VM instance")
     println("  GET  /v1/vm/{vm_id}             -- inspect VM state")
     println("  POST /v1/vm/{vm_id}/execute     -- execute one instruction against it")
+    println("  POST /v1/identity               -- create/derive a canonical identity (seed+path)")
+    println("  GET  /v1/identity/lookup         -- reverse lookup by pillar+pillar_id")
+    println("  GET  /v1/identity/{canonical_id} -- get all pillar links for a canonical identity")
+    println("  POST /v1/identity/{canonical_id}/link -- link a pillar-native ID to it")
     HTTP.serve(router, "0.0.0.0", PORT)
 end
 
