@@ -78,15 +78,22 @@ const PUBKEY = repeat("a", 64)
         @test id != event_id(; base..., tags = [["d", "a"]])
     end
 
-    @testset "relay allowlist is enforced locally" begin
-        @test relay_admits(KIND_AGENT_ENGRAM)
-        @test relay_admits(KIND_CLAIM)
-        @test relay_admits(47999)
-        @test !relay_admits(48000)
+    @testset "every kind OSOVM emits is publishable" begin
+        @test is_publishable(KIND_AGENT_ENGRAM)
+        @test is_publishable(KIND_CLAIM)
+        @test is_publishable(KIND_AUTH)
         # The failure this guard exists to prevent: a plausible custom kind
         # the relay drops after auth succeeds, which reads as an auth problem.
-        @test !relay_admits(31337)
-        @test !relay_admits(1)
+        @test !is_publishable(31337)
+    end
+
+    @testset "is_publishable does not claim the relay rejects other kinds" begin
+        # The relay accepts far more than OSOVM emits -- kind 1, 7, 30023,
+        # 30315 and much of Buzz's vocabulary. false here means "not ours",
+        # never "refused". Conflating the two sent an earlier draft of this
+        # module into over-restricting, so this pins the distinction.
+        @test !is_publishable(7)
+        @test !is_publishable(1)
     end
 
     @testset "an unadmitted kind is refused before an event is built" begin

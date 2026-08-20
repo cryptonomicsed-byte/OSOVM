@@ -47,7 +47,7 @@ module NostrBridge
 using SHA
 
 export KIND_AGENT_ENGRAM, KIND_CLAIM, KIND_AUTH, SLUG_PREFIX,
-       relay_admits, canonical_serialize, event_id, build_unsigned_event,
+       is_publishable, canonical_serialize, event_id, build_unsigned_event,
        execution_record, slug_execution, execution_engram, execution_claim
 
 # ============================================================================
@@ -72,15 +72,22 @@ const CRUCIBLE_RESERVED = 47000:47999
 const SLUG_PREFIX = "mem/osovm"
 
 """
-    relay_admits(kind) -> Bool
+    is_publishable(kind) -> Bool
 
-True when the production Buzz relay's allowlist admits `kind`.
+True when `kind` is one OSOVM is allowed to publish under.
 
-The relay rejects unknown kinds *after* authentication succeeds, with
-`restricted: unknown event kind` — which reads like an auth failure and is not
-one. Checking locally turns that into a clear error at the call site.
+Deliberately **not** a mirror of the relay's allowlist. That allowlist is a
+large match arm in `required_scope_for_kind` covering most of Buzz's own
+vocabulary (kind 1, 7, 30023, 30315 and many more), and a copy here would drift
+out of sync silently while claiming an authority this module does not have.
+What this states is narrower and checkable: the kinds OSOVM emits.
+
+A `false` therefore means "not ours", never "the relay would refuse it". The
+relay does reject kinds with no match arm — after authentication succeeds,
+which reads like an auth failure and is not one — so checking locally still
+turns a caller's mistake into a clear error at the call site.
 """
-relay_admits(kind::Integer) = kind == KIND_AGENT_ENGRAM || kind in CRUCIBLE_RESERVED
+is_publishable(kind::Integer) = kind in (KIND_AGENT_ENGRAM, KIND_CLAIM, KIND_AUTH)
 
 # ============================================================================
 # CANONICAL SERIALIZATION
@@ -172,13 +179,12 @@ A canonical event complete except for `sig`. A signer that owns the agent's key
 signs `id` and attaches the signature; it must not recompute or alter any other
 field, or the id stops matching what was signed.
 
-Throws if `kind` would be rejected by the relay allowlist, or if `pubkey` is
-not 64 hex characters.
+Throws if `kind` is not one OSOVM publishes under, or if `pubkey` is not
+64 hex characters.
 """
 function build_unsigned_event(; pubkey, kind, content, tags = Vector{Vector{String}}(),
                               created_at = nothing)
-    relay_admits(kind) || error(
-        "kind $kind is not admitted by the Buzz relay allowlist (30174, 47000-47999)")
+    is_publishable(kind) || error("kind $kind is not one OSOVM publishes under")
     occursin(r"^[0-9a-f]{64}$", pubkey) ||
         error("pubkey must be 64 hex characters (x-only secp256k1)")
 
