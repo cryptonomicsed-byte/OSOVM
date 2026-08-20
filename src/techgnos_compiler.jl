@@ -427,6 +427,10 @@ function compile_tech(source::String)::Vector{Dict{String, Any}}
         for func in contract.functions
             for attr in func.attributes
                 opcode = Opcodes.get_opcode(attr)
+                if opcode == 0x00 && attr != :HALT
+                    @warn "Unknown attribute: $attr, using NOOP"
+                    opcode = 0x01
+                end
                 push!(ir, Dict(
                     "opcode" => opcode,
                     "args" => Dict{Symbol, Any}(),
