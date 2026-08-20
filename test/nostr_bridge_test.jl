@@ -152,6 +152,29 @@ const PUBKEY = repeat("a", 64)
         @test startswith(slug_execution("job-1"), "mem/osovm/")
     end
 
+    @testset "a slug minipae would reject is never built" begin
+        # minipae.py::validate_slug allows only [a-z0-9_-] per segment. A job id
+        # carrying capitals or Yoruba diacritics would otherwise produce an
+        # engram no minipae client can address.
+        @test slug_execution("Job-1") == "mem/osovm/execution/job-1"
+        @test slug_execution("ọjọ́-ògún") == "mem/osovm/execution/ojo-ogun"
+        @test validate_slug(slug_execution("Job-1"))
+    end
+
+    @testset "slug validation matches minipae grammar" begin
+        @test validate_slug("mem/osovm/execution/job-1")
+        @test !validate_slug("mem/osovm/execution/Job-1")
+        @test !validate_slug("mem/osovm/execution/ọjọ́")
+        @test !validate_slug("mem/osovm//job")
+        @test !validate_slug("osovm/execution")
+        @test !validate_slug("mem/osovm/" * repeat("x", 65))
+    end
+
+    @testset "a segment that normalises to nothing fails loudly" begin
+        @test_throws ErrorException normalize_slug_segment("!!!")
+        @test_throws ErrorException normalize_slug_segment("")
+    end
+
     @testset "a claim without a falsifier is refused rather than emitted" begin
         # Crucible rejects such a claim at parse time; failing here gives a
         # clear error instead of a silent bounce at the relay.

@@ -45,10 +45,12 @@
 module NostrBridge
 
 using SHA
+using Unicode
 
 export KIND_AGENT_ENGRAM, KIND_CLAIM, KIND_AUTH, SLUG_PREFIX,
        is_publishable, canonical_serialize, event_id, build_unsigned_event,
-       execution_record, slug_execution, execution_engram, execution_claim
+       execution_record, slug_execution, execution_engram, execution_claim,
+       validate_slug, normalize_slug_segment
 
 # ============================================================================
 # THE SHARED WIRE CONTRACT
@@ -229,8 +231,69 @@ function execution_record(; job_id, opcode_count, state_root, deterministic,
     )
 end
 
-"Slug for one job execution."
-slug_execution(job_id::AbstractString) = string(SLUG_PREFIX, "/execution/", job_id)
+"""
+    validate_slug(slug) -> Bool
+
+minipae's slug grammar, which every engram address must satisfy.
+
+Verified against `minipae.py::validate_slug`: each `/`-separated segment after
+`mem/` must be non-empty, at most 64 bytes, start with a lowercase letter,
+digit or `_`, and contain only lowercase letters, digits, `_` and `-`. The
+whole slug must be at most 255 bytes.
+"""
+function validate_slug(slug::AbstractString)
+    ncodeunits(slug) > 255 && return false
+    startswith(slug, "mem/") || return false
+    rest = slug[5:end]
+    isempty(rest) && return false
+    for part in split(rest, '/')
+        (isempty(part) || ncodeunits(part) > 64) && return false
+        occursin(r"^[a-z0-9_][a-z0-9_-]*$", part) || return false
+    end
+    true
+end
+
+"""
+    normalize_slug_segment(segment) -> String
+
+Fold one path segment into minipae's grammar.
+
+This ecosystem's vocabulary is Yorùbá — veil and Òrìṣà names carry diacritics,
+and job identifiers may carry capitals — and none of that satisfies the
+grammar above. An unnormalised segment produces a slug `validate_slug` refuses,
+which would make the engram unaddressable by every minipae client.
+
+Normalising costs nothing that matters: the slug is HMAC'd into the `d` tag
+before it reaches the wire, so it is an addressing key and never display text,
+and the Yorùbá name travels intact in the event content.
+
+Strips combining marks (`ọ́` -> `o`), lowercases, and maps anything still
+outside the grammar to `-`. Throws if nothing survives.
+"""
+function normalize_slug_segment(segment)
+    folded = Unicode.normalize(String(segment), stripmark = true, casefold = true)
+    folded = replace(folded, r"[^a-z0-9_-]+" => "-")
+    folded = replace(folded, r"-{2,}" => "-")
+    folded = strip(folded, '-')
+    folded = first(folded, 64)
+    isempty(folded) && error(
+        "slug segment $(repr(segment)) normalises to nothing; " *
+        "it cannot be used as an engram address")
+    String(folded)
+end
+
+"""
+    slug_execution(job_id) -> String
+
+Slug for one job execution. The id is normalised and the result validated — a
+slug minipae would reject is worth failing on here rather than discovering as
+an unreadable engram later.
+"""
+function slug_execution(job_id::AbstractString)
+    slug = string(SLUG_PREFIX, "/execution/", normalize_slug_segment(job_id))
+    validate_slug(slug) || error("built an invalid engram slug: $slug")
+    slug
+end
 
 """
     execution_engram(; pubkey, record, owner_pubkey, d_tag, created_at) -> Dict
