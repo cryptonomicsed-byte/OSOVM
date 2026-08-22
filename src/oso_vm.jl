@@ -1314,24 +1314,30 @@ end
 # real invariant chains; the 7 ORISA_* invocation opcodes share one
 # generic dedupe-by-id pattern since they differ only in which òrìṣà.
 function handle_orisa_1(vm::VMState, opcode::UInt8, args)::Any
+    # Public (universal) role name is the primary output per §9/§27b (civic
+    # outside, Ifá inside); the Yoruba canonical name is kept alongside it,
+    # not deleted, since internal/canon consumers still key on :orisa.
     orisa_names = Dict{UInt8, String}(0xa0 => "Ọbàtálá", 0xa1 => "Ògún", 0xa2 => "Yemọja", 0xa3 => "Ṣàngó", 0xa4 => "Ọ̀ṣun")
+    universal_names = Dict{UInt8, String}(0xa0 => "Wisdom", 0xa1 => "The Forge", 0xa2 => "Creation", 0xa3 => "Divine Justice", 0xa4 => "Memory")
     if opcode in keys(orisa_names)
         id = get(args, :id, "invocation-$(length(vm.orisa_invocations) + 1)")
         haskey(vm.orisa_invocations, id) && return Dict("error" => "invocation already exists: $id", "success" => false)
         vm.orisa_invocations[id] = Dict{Symbol, Any}(:id => id, :orisa => orisa_names[opcode], :invoker => vm.current_sender)
-        return Dict("invocation" => id, "orisa" => orisa_names[opcode], "success" => true)
+        return Dict("invocation" => id, "role" => universal_names[opcode], "orisa" => orisa_names[opcode], "success" => true)
     else
         return Dict("error" => "unreachable: opcode not in 0xa0-0xa4", "success" => false)
     end
 end
 
 function handle_orisa_2(vm::VMState, opcode::UInt8, args)::Any
+    # See handle_orisa_1 for the universal/canon dual-field rationale.
     orisa_names = Dict{UInt8, String}(0xa5 => "Ọya", 0xa6 => "Èṣù", 0xa7 => "Ọ̀rúnmìlà")
+    universal_names = Dict{UInt8, String}(0xa5 => "Flow", 0xa6 => "The Messenger", 0xa7 => "The Oracle")
     if opcode in keys(orisa_names)
         id = get(args, :id, "invocation-$(length(vm.orisa_invocations) + 1)")
         haskey(vm.orisa_invocations, id) && return Dict("error" => "invocation already exists: $id", "success" => false)
         vm.orisa_invocations[id] = Dict{Symbol, Any}(:id => id, :orisa => orisa_names[opcode], :invoker => vm.current_sender)
-        return Dict("invocation" => id, "orisa" => orisa_names[opcode], "success" => true)
+        return Dict("invocation" => id, "role" => universal_names[opcode], "orisa" => orisa_names[opcode], "success" => true)
 
     elseif opcode == 0xa8  # IFA_DIVINATION -- oracle reading, requires a real diviner
         id = get(args, :id, "")

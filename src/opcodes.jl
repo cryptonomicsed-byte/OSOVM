@@ -132,6 +132,10 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
     :RELAPSE        => 0x93,  # @relapse - Condition return
     
     # Òrìṣà Spiritual Layer (25)
+    # Universalization (§9/§27b, same "civic outside, Ifá inside" pattern
+    # as @maintenance/@sabbath): each opcode also has a universal-name
+    # keyword alias below, resolving to the same opcode byte. Legacy
+    # @orisaX keywords keep parsing — neither list is removed.
     :ORISA_OBATALA  => 0xa0,  # @orisaObatala - White cloth, purity
     :ORISA_OGUN     => 0xa1,  # @orisaOgun - Iron, war
     :ORISA_YEMOJA   => 0xa2,  # @orisaYemoja - Ocean, motherhood
@@ -140,6 +144,14 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
     :ORISA_OYA      => 0xa5,  # @orisaOya - Wind, transformation
     :ORISA_ESU      => 0xa6,  # @orisaEsu - Crossroads, trickster
     :ORISA_ORUNMILA => 0xa7,  # @orisaOrunmila - Divination, wisdom
+    :WISDOM         => 0xa0,  # @wisdom - universal alias of @orisaObatala
+    :THE_FORGE      => 0xa1,  # @theForge - universal alias of @orisaOgun
+    :CREATION       => 0xa2,  # @creation - universal alias of @orisaYemoja
+    :DIVINE_JUSTICE => 0xa3,  # @divineJustice - universal alias of @orisaSango
+    :MEMORY         => 0xa4,  # @memory - universal alias of @orisaOshun
+    :FLOW           => 0xa5,  # @flow - universal alias of @orisaOya
+    :THE_MESSENGER  => 0xa6,  # @theMessenger - universal alias of @orisaEsu
+    :THE_ORACLE     => 0xa7,  # @theOracle - universal alias of @orisaOrunmila
     :IFA_DIVINATION => 0xa8,  # @ifaDivination - Oracle reading
     :ODU            => 0xa9,  # @odu - Sacred sign
     :ESE            => 0xaa,  # @ese - Proverb, teaching
