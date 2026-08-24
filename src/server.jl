@@ -314,10 +314,16 @@ function handle_execute(req::HTTP.Request, vm_id::String)
 
     try
         opcode_sym = Symbol(task_data["opcode"])
-        if !haskey(OsoVM.Opcodes.OPCODE_MAP, opcode_sym)
+        # GLYPH_* opcodes (0xF0-0xF4) live in GlyphIndex.GLYPH_OPCODES, not
+        # Opcodes.OPCODE_MAP -- checked second so the free 0xF0 block stays
+        # reachable over this same execute endpoint.
+        if haskey(OsoVM.Opcodes.OPCODE_MAP, opcode_sym)
+            opcode_val = OsoVM.Opcodes.OPCODE_MAP[opcode_sym]
+        elseif haskey(OsoVM.GlyphIndex.GLYPH_OPCODES, opcode_sym)
+            opcode_val = OsoVM.GlyphIndex.GLYPH_OPCODES[opcode_sym]
+        else
             return error_response(400, "unknown opcode: $(task_data["opcode"])")
         end
-        opcode_val = OsoVM.Opcodes.OPCODE_MAP[opcode_sym]
 
         task_args = Dict{Symbol, Any}()
         if haskey(task_data, "args")
@@ -535,6 +541,24 @@ function router(req::HTTP.Request)
 end
 
 function main()
+    # Warm up the JIT before opening the listener. execute_instruction is
+    # one large function covering every opcode cluster's elseif branch --
+    # Julia compiles the WHOLE method body on its first call regardless of
+    # which branch actually runs, and that first compile has been observed
+    # taking 20+ minutes under real request load (vs ~4min standalone),
+    # during which the server accepts connections but answers nothing --
+    # even /v1/health. Paying that cost once here, before HTTP.serve,
+    # keeps it off the first real caller.
+    print("[OSOVM Server] Warming up JIT (compiling execute_instruction)... ")
+    warmup_start = time()
+    try
+        warmup_vm = OsoVM.create_vm(glyph_journal_path = tempname())
+        OsoVM.execute_instruction(warmup_vm, OsoVM.OsoCompiler.Instruction(0x01, Dict{Symbol,Any}()))
+        println("done in $(round(time() - warmup_start, digits=1))s")
+    catch e
+        println("failed after $(round(time() - warmup_start, digits=1))s: $(sprint(showerror, e))")
+    end
+
     println("[OSOVM Server] Starting on 0.0.0.0:$PORT")
     println("[OSOVM Server] Routes:")
     println("  GET  /v1/health")

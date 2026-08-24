@@ -6,9 +6,11 @@ module OsoVM
 
 include("opcodes.jl")
 include("oso_compiler.jl")
+include("glyphindex.jl")
 
 using .Opcodes
 using .OsoCompiler
+using .GlyphIndex
 using SHA
 
 export execute_ir, VMState, create_vm
@@ -216,12 +218,21 @@ mutable struct VMState
     migrations::Dict{String, Dict{Symbol, Any}}
     rollbacks::Dict{String, Dict{Symbol, Any}}
     op_checkpoints::Dict{String, Dict{Symbol, Any}}
+    # GlyphIndex memory syscall surface (real dispatch, replaces the
+    # previously-unwired GLYPH_STORE/EXPAND/SEARCH/ANCHOR/AUDIT opcodes
+    # 0xF0-0xF4 defined in glyphindex.jl but never reachable from
+    # execute_instruction). One vault per VM instance; the VM only ever
+    # handles ciphertext (sealed GIX1 blobs) -- it never holds keys.
+    glyph_vault::GlyphIndex.GlyphVault
 end
 
-function create_vm(; 
+function create_vm(;
     council::Vector{String} = String[],
-    final_signer::String = "bino_genesis")::VMState
-    
+    final_signer::String = "bino_genesis",
+    glyph_journal_path::String = joinpath(@__DIR__, "..", "data", "glyph_vault.jsonl"))::VMState
+
+    mkpath(dirname(glyph_journal_path))
+
     # Initialize 1440 wallets
     wallets = [InheritanceWallet(
         UInt16(i),
@@ -370,7 +381,8 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # restores
         Dict{String, Dict{Symbol, Any}}(),   # migrations
         Dict{String, Dict{Symbol, Any}}(),   # rollbacks
-        Dict{String, Dict{Symbol, Any}}()    # op_checkpoints
+        Dict{String, Dict{Symbol, Any}}(),   # op_checkpoints
+        GlyphIndex.GlyphVault(final_signer, glyph_journal_path)
     )
 end
 
@@ -546,6 +558,10 @@ function is_critical(opcode::UInt8)::Bool
         # to call_ase_vault() and flagged as an open design question,
         # not silently "fixed."
         0x26, 0x36, 0x39, 0x3a, 0x3b,
+        # GlyphIndex memory syscall surface: real handlers below wire the
+        # 5 GLYPH_* opcodes (glyphindex.jl) into dispatch for the first
+        # time -- previously defined but unreachable dead code.
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
     ]
 end
 
@@ -1847,6 +1863,67 @@ function handle_extended_ops(vm::VMState, opcode::UInt8, args)::Any
     end
 end
 
+# GlyphIndex memory syscall surface (5 opcodes, real dispatch onto
+# glyphindex.jl's GlyphVault). Sealed blobs and receipts cross the opcode
+# boundary as hex strings (JSON has no bytes type); the VM decodes/encodes
+# but never decrypts -- parse_gix1 inside store!/expand_meta is the only
+# structural check it performs on ciphertext.
+function handle_glyphindex(vm::VMState, opcode::UInt8, args)::Any
+    vault = vm.glyph_vault
+    if opcode == GlyphIndex.GLYPH_OPCODES[:GLYPH_STORE]
+        chunk = String(get(args, :chunk, ""))
+        sealed_blob = hex2bytes(String(get(args, :sealed_blob_hex, "")))
+        walrus_blob_id = String(get(args, :walrus_blob_id, ""))
+        node = GlyphIndex.store!(vault, chunk, sealed_blob; walrus_blob_id = walrus_blob_id)
+        return Dict("status" => "stored", "canonical_id" => node.canonical_id,
+                    "glyph_codepoint" => Int(node.glyph),
+                    "odu_base" => node.odu_base, "odu_composed" => node.odu_composed)
+    elseif opcode == GlyphIndex.GLYPH_OPCODES[:GLYPH_EXPAND]
+        canonical_id = String(get(args, :canonical_id, ""))
+        (node, sealed_blob) = GlyphIndex.expand_meta(vault, canonical_id)
+        return Dict("status" => "expanded", "canonical_id" => node.canonical_id,
+                    "glyph_codepoint" => Int(node.glyph),
+                    "odu_base" => node.odu_base, "odu_composed" => node.odu_composed,
+                    "blob_sha256" => node.blob_sha256, "ts" => node.ts,
+                    "sealed_blob_hex" => bytes2hex(sealed_blob))
+    elseif opcode == GlyphIndex.GLYPH_OPCODES[:GLYPH_SEARCH]
+        query = String(get(args, :query, ""))
+        k = Int(get(args, :k, 3))
+        results = GlyphIndex.search(vault, query; k = k)
+        return Dict("status" => "searched", "results" => [
+            Dict("canonical_id" => n.canonical_id, "glyph_codepoint" => Int(n.glyph),
+                 "blob_sha256" => n.blob_sha256, "ts" => n.ts) for n in results])
+    elseif opcode == GlyphIndex.GLYPH_OPCODES[:GLYPH_ANCHOR]
+        return Dict("status" => "anchored", "merkle_root" => GlyphIndex.merkle_root(vault))
+    elseif opcode == GlyphIndex.GLYPH_OPCODES[:GLYPH_AUDIT]
+        canonical_id = String(get(args, :canonical_id, ""))
+        mac_key = hex2bytes(String(get(args, :mac_key_hex, "")))
+        # Two real modes, not one tautological one: if the caller supplies
+        # a previously-issued `receipt` (e.g. Zangbeto re-checking a stored
+        # receipt against its own copy of the key), verify THAT receipt --
+        # regenerating a fresh receipt from the same key and calling
+        # verify_receipt on it is always true by construction and would
+        # never actually detect tampering. Otherwise, issue a fresh receipt
+        # (self-consistently true, since nothing to compare it against yet).
+        supplied_receipt = get(args, :receipt, nothing)
+        r = supplied_receipt !== nothing ?
+            Dict{String, Any}(String(k) => v for (k, v) in supplied_receipt) :
+            GlyphIndex.receipt(vault, canonical_id, mac_key)
+        # Structural re-audit of the sealed blob (parse_gix1), matching the
+        # "envelope audit" half of GLYPH_AUDIT alongside the HMAC receipt.
+        (_, sealed_blob) = GlyphIndex.expand_meta(vault, canonical_id)
+        envelope_valid = try
+            GlyphIndex.parse_gix1(sealed_blob)
+            true
+        catch
+            false
+        end
+        return Dict("status" => "audited", "receipt" => r,
+                    "receipt_verified" => GlyphIndex.verify_receipt(r, mac_key),
+                    "envelope_valid" => envelope_valid)
+    end
+end
+
 
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
@@ -2472,6 +2549,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     # Extended Operations cluster (real stateful tracking, not decorative)
     elseif opcode in 0xe0:0xe9  # Extended Operations cluster
         return handle_extended_ops(vm, opcode, args)
+
+    # GlyphIndex memory syscall surface (real stateful dispatch, not decorative)
+    elseif opcode in 0xf0:0xf4  # GlyphIndex cluster
+        return handle_glyphindex(vm, opcode, args)
 
     else
         # Unknown opcode - log and continue
