@@ -789,6 +789,25 @@ function main()
         println("failed after $(round(time() - warmup_start, digits=1))s: $(sprint(showerror, e))")
     end
 
+    # Warm up the job/proof pipeline too, so the first /v1/job request does
+    # not pay a compile pause (the same reason execute_instruction is warmed
+    # above).
+    print("[OSOVM Server] Warming up job pipeline (VeilSim + receipts)... ")
+    pipeline_start = time()
+    try
+        warm_spec = ZangbetoReceipts.JobSpec.SimJobSpec(:dsl, "warmup", Dict("timestep" => 0.01), 1, 2, ["f1_score"], "0xwarmup", now())
+        warm_sim = VeilSimEngine.initialize_simulation("warmup", Dict[Dict("type" => "robot", "position" => [0.0, 0.0, 0.0], "target" => [10.0, 0.0, 0.0], "veils" => [1, 2, 3])], Dict("gravity" => [0.0, -9.81, 0.0]), 0.01)
+        warm_final, warm_hist = VeilSimEngine.batch_simulation(warm_sim, 2)
+        warm_ck = ZangbetoReceipts.CheckpointExport.Checkpoint[
+            ZangbetoReceipts.CheckpointExport.Checkpoint(i, Dict("time" => Float64(i) * 0.01, "entities" => length(warm_final.entities)), _sim_metrics_to_dict(warm_hist[i]))
+            for i in 1:length(warm_hist)
+        ]
+        ZangbetoReceipts.create_job_receipt(warm_spec, warm_ck, Dict{String, Float64}("f1_score" => warm_final.metrics.f1_score), "")
+        println("done in $(round(time() - pipeline_start, digits=1))s")
+    catch e
+        println("failed after $(round(time() - pipeline_start, digits=1))s: $(sprint(showerror, e))")
+    end
+
     println("[OSOVM Server] Starting on 0.0.0.0:$PORT")
     println("[OSOVM Server] Routes:")
     println("  GET  /v1/health")
