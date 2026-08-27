@@ -76,6 +76,29 @@ witness-bridge submit-witness \
 The printed command is the transport step — run it (it is the `sui client call`)
 against the configured network.
 
+## Testnet deployment (verified 2026-08-27)
+
+The `techgnosis` package containing `proof_of_witness` is **already published**
+on Sui testnet. The `init()` created and shared the two proof_of_witness objects
+at publish time, so no further deploy is needed — only the IDs, which are
+recorded in `testnet.env`:
+
+| Piece | Object ID |
+|---|---|
+| Package | `0xb3b6ef1ddaec611ade78909f1eb44e704a882be0406fb16e0d78b344a08050af` |
+| `proof_of_witness::WitnessOracle` | `0x03380e98b5a2f1f6aee5922d0c99ccd391417df95f379e6855f7f8cfa554b401` |
+| `proof_of_witness::SensorRegistry` | `0x6b38050454f1ce992b1ae0a5a7c08e5b11c4c7edab081ca59bb764854724cd98` |
+
+```sh
+source testnet.env
+witness-bridge register-sensor \
+  --package "$PACKAGE_ID" --oracle "$ORACLE_ID" --registry "$REGISTRY_ID" \
+  --sensor 1 --metadata 0000 --location 0000 --public-key <PUB_HEX>
+```
+
+The remaining runtime gap is gas (the testnet operator address holds ~0.0075 SUI;
+top up via the faucet before the first on-chain call).
+
 ## Note on the Schnorr→Ed25519 mapping
 
 Witness-firmware's `WitnessIdentity` currently signs with secp256k1/BIP-340
