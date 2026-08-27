@@ -28,6 +28,11 @@ using SHA
 include("oso_vm.jl")
 using .OsoVM
 
+include("veilsim_engine.jl")
+using .VeilSimEngine
+include("zangbeto_receipts.jl")
+using .ZangbetoReceipts
+
 const PORT = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 7778
 
 # vm_id => VMState. Guarded by VM_LOCK since HTTP.jl serves requests on
@@ -64,6 +69,21 @@ const IDENTITY_REGISTRY = Dict{String, Dict{String, Any}}()
 # both claim to speak for the same Witness node's pubkey).
 const IDENTITY_REVERSE = Dict{String, String}()
 const IDENTITY_LOCK = ReentrantLock()
+
+# ============ Job / Proof Pipeline Registry ============
+# Closes the "no network door to the proof pipeline" gap: job_spec.jl /
+# merkle.jl / checkpoint_export.jl / zangbeto_receipts.jl were library-only.
+# These routes wire them into a submit -> execute -> prove -> receipt loop
+# over HTTP, for the :dsl tier (VeilSim). :custom (CubeSandbox) is still
+# task #24 and returns 409 until a sandbox runtime exists.
+const JOB_REGISTRY = Dict{String, Dict{String, Any}}()
+const JOB_LOCK = ReentrantLock()
+
+# Metric names VeilSim can actually compute (SimulationMetrics fields).
+const VEILSIM_METRICS = [
+    "f1_score", "energy_efficiency", "convergence_rate", "robustness_score",
+    "latency_ms", "throughput_vps", "total_energy", "energy_drift", "collision_count",
+]
 
 # ============ Published API schema (OpenAPI 3.0) ============
 # Closes gap #4 from the ecosystem-alignment orchestration (round 3):
@@ -503,6 +523,203 @@ function handle_lookup_identity(req::HTTP.Request)
     ))
 end
 
+# ============ Job / Proof handlers ============
+
+_string_vec(v) = v === nothing ? String[] : (v isa AbstractString ? [String(v)] : [String(x) for x in v])
+
+function _sim_metrics_to_dict(m::VeilSimEngine.SimulationMetrics)::Dict{String, Float64}
+    Dict{String, Float64}(
+        "f1_score" => m.f1_score,
+        "energy_efficiency" => m.energy_efficiency,
+        "convergence_rate" => m.convergence_rate,
+        "robustness_score" => m.robustness_score,
+        "latency_ms" => m.latency_ms,
+        "throughput_vps" => m.throughput_vps,
+        "total_energy" => m.total_energy,
+        "energy_drift" => m.energy_drift,
+        "collision_count" => Float64(m.collision_count),
+    )
+end
+
+function _bundle_to_dict(b::ZangbetoReceipts.JobReceiptBundle)::Dict{String, Any}
+    Dict{String, Any}(
+        "job_id" => b.job_id,
+        "spec_kind" => String(b.spec_kind),
+        "creator_wallet" => b.creator_wallet,
+        "checkpoint_count" => b.checkpoint_count,
+        "checkpoint_merkle_root" => b.checkpoint_merkle_root,
+        "final_metrics" => b.final_metrics,
+        "walrus_blob_id" => b.walrus_blob_id,
+        "votes" => [Dict{String, Any}("witness_id" => v.witness_id, "approved" => v.approved, "witness_hash" => v.witness_hash) for v in b.votes],
+        "quorum_met" => b.quorum_met,
+        "total_approvals" => b.total_approvals,
+        "status" => b.status,
+        "seal" => b.seal,
+        "seal_dek_fingerprint" => b.seal_dek_fingerprint,
+        "created_at" => string(b.created_at),
+    )
+end
+
+function _job_entry(job_id::String)
+    lock(JOB_LOCK) do
+        return get(JOB_REGISTRY, job_id, nothing)
+    end
+end
+
+function handle_submit_job(req::HTTP.Request)
+    body = Dict{String, Any}()
+    if !isempty(String(req.body))
+        try
+            body = JSON.parse(String(req.body))
+        catch e
+            return error_response(400, "invalid JSON body: $(sprint(showerror, e))")
+        end
+    end
+    kind_raw = lowercase(String(get(body, "kind", "dsl")))
+    kind = kind_raw == "custom" ? :custom : :dsl
+    world = String(get(body, "world", ""))
+    parameters = get(body, "parameters", Dict{String, Any}())
+    parameters isa Dict || (parameters = Dict{String, Any}())
+    seed = Int(get(body, "seed", 0))
+    duration_steps = Int(get(body, "duration_steps", 0))
+    metrics_schema = _string_vec(get(body, "metrics_schema", nothing))
+    creator_wallet = String(get(body, "creator_wallet", ""))
+
+    try
+        spec = ZangbetoReceipts.JobSpec.SimJobSpec(kind, world, parameters, seed, duration_steps, metrics_schema, creator_wallet, now())
+        errors = ZangbetoReceipts.JobSpec.validate_spec(spec)
+        isempty(errors) || return error_response(422, "invalid job spec: $(join(errors, "; "))")
+        jid = ZangbetoReceipts.JobSpec.job_id(spec)
+        lock(JOB_LOCK) do
+            JOB_REGISTRY[jid] = Dict{String, Any}(
+                "spec" => spec, "checkpoints" => nothing, "final_metrics" => nothing,
+                "receipt" => nothing, "status" => "SUBMITTED",
+            )
+        end
+        return json_response(201, Dict(
+            "job_id" => jid, "kind" => String(kind), "duration_steps" => duration_steps,
+            "metrics_schema" => metrics_schema,
+        ))
+    catch e
+        return error_response(422, sprint(showerror, e))
+    end
+end
+
+function handle_run_job(req::HTTP.Request, job_id::String)
+    entry = _job_entry(job_id)
+    entry === nothing && return error_response(404, "unknown job_id")
+    spec = entry["spec"]
+
+    if spec.kind == :custom
+        return error_response(409, "custom-tier execution requires CubeSandbox (task #24, not provisioned); use kind=dsl")
+    end
+
+    missing_metrics = [m for m in spec.metrics_schema if !(m in VEILSIM_METRICS)]
+    isempty(missing_metrics) || return error_response(422, "declared metrics not computable by VeilSim: $(join(missing_metrics, ", "))")
+
+    try
+        timestep = Float64(get(spec.parameters, "timestep", 0.01))
+        environment = get(spec.parameters, "environment", Dict{String, Any}())
+        environment = environment isa Dict ? Dict{String, Any}(environment) : Dict{String, Any}("gravity" => [0.0, -9.81, 0.0])
+        entities_config = Dict[
+            Dict("type" => "robot", "position" => [0.0, 0.0, 0.0],
+                 "target" => [10.0, 0.0, 0.0], "veils" => [1, 2, 3])
+        ]
+
+        sim = VeilSimEngine.initialize_simulation(spec.world, entities_config, environment, timestep)
+        final_sim, metrics_history = VeilSimEngine.batch_simulation(sim, spec.duration_steps)
+
+        CE = ZangbetoReceipts.CheckpointExport
+        checkpoints = CE.Checkpoint[
+            CE.Checkpoint(
+                i,
+                Dict{String, Any}("time" => Float64(i) * timestep, "entities" => length(final_sim.entities)),
+                _sim_metrics_to_dict(metrics_history[i]),
+            )
+            for i in 1:length(metrics_history)
+        ]
+        all_metrics = _sim_metrics_to_dict(final_sim.metrics)
+        final_metrics = Dict{String, Float64}(m => all_metrics[m] for m in spec.metrics_schema)
+
+        lock(JOB_LOCK) do
+            JOB_REGISTRY[job_id]["checkpoints"] = checkpoints
+            JOB_REGISTRY[job_id]["final_metrics"] = final_metrics
+            JOB_REGISTRY[job_id]["status"] = "EXECUTED"
+        end
+        return json_response(200, Dict(
+            "job_id" => job_id, "status" => "EXECUTED",
+            "checkpoint_count" => length(checkpoints), "final_metrics" => final_metrics,
+        ))
+    catch e
+        return error_response(500, "execution failed: $(sprint(showerror, e))")
+    end
+end
+
+function handle_create_job_receipt(req::HTTP.Request, job_id::String)
+    body = Dict{String, Any}()
+    if !isempty(String(req.body))
+        try
+            body = JSON.parse(String(req.body))
+        catch e
+            return error_response(400, "invalid JSON body: $(sprint(showerror, e))")
+        end
+    end
+    entry = _job_entry(job_id)
+    entry === nothing && return error_response(404, "unknown job_id")
+    checkpoints = entry["checkpoints"]
+    checkpoints === nothing && return error_response(409, "job has not been run; POST /v1/job/$job_id/run first")
+    walrus_blob_id = String(get(body, "walrus_blob_id", ""))
+    try
+        bundle = ZangbetoReceipts.create_job_receipt(entry["spec"], checkpoints, entry["final_metrics"], walrus_blob_id)
+        lock(JOB_LOCK) do
+            JOB_REGISTRY[job_id]["receipt"] = bundle
+            JOB_REGISTRY[job_id]["status"] = "RECEIPTED"
+        end
+        return json_response(200, _bundle_to_dict(bundle))
+    catch e
+        return error_response(422, sprint(showerror, e))
+    end
+end
+
+function handle_get_job(req::HTTP.Request, job_id::String)
+    entry = _job_entry(job_id)
+    entry === nothing && return error_response(404, "unknown job_id")
+    spec = entry["spec"]
+    return json_response(200, Dict(
+        "job_id" => job_id, "kind" => String(spec.kind), "world" => spec.world,
+        "seed" => spec.seed, "duration_steps" => spec.duration_steps,
+        "metrics_schema" => spec.metrics_schema, "creator_wallet" => spec.creator_wallet,
+        "status" => entry["status"],
+        "checkpoint_count" => entry["checkpoints"] === nothing ? 0 : length(entry["checkpoints"]),
+    ))
+end
+
+function handle_get_job_receipt(req::HTTP.Request, job_id::String)
+    entry = _job_entry(job_id)
+    entry === nothing && return error_response(404, "unknown job_id")
+    receipt = entry["receipt"]
+    receipt === nothing && return error_response(404, "no receipt for this job yet")
+    return json_response(200, _bundle_to_dict(receipt))
+end
+
+function handle_merkle_proof(req::HTTP.Request, job_id::String, leaf_index::Int)
+    entry = _job_entry(job_id)
+    entry === nothing && return error_response(404, "unknown job_id")
+    checkpoints = entry["checkpoints"]
+    checkpoints === nothing && return error_response(409, "job has not been run")
+    CE = ZangbetoReceipts.CheckpointExport
+    Merkle = ZangbetoReceipts.Merkle
+    leaves = CE.checkpoint_leaves(checkpoints)
+    (1 <= leaf_index <= length(leaves)) || return error_response(400, "leaf_index out of range 1..$(length(leaves))")
+    path = Merkle.merkle_path(leaves, leaf_index)
+    root = Merkle.merkle_root(leaves)
+    return json_response(200, Dict(
+        "job_id" => job_id, "leaf_index" => leaf_index,
+        "leaf_hex" => bytes2hex(leaves[leaf_index]), "root_hex" => bytes2hex(root),
+        "path" => [Dict("sibling_hex" => bytes2hex(p.sibling), "side" => String(p.side)) for p in path],
+    ))
+end
+
 # ============ Router ============
 
 function router(req::HTTP.Request)
@@ -529,6 +746,18 @@ function router(req::HTTP.Request)
             return handle_get_identity(req, String(parts[3]))
         elseif method == "POST" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "identity" && parts[4] == "link"
             return handle_link_identity(req, String(parts[3]))
+        elseif method == "POST" && path == "/v1/job"
+            return handle_submit_job(req)
+        elseif method == "POST" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "job" && parts[4] == "run"
+            return handle_run_job(req, String(parts[3]))
+        elseif method == "POST" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "job" && parts[4] == "receipt"
+            return handle_create_job_receipt(req, String(parts[3]))
+        elseif method == "GET" && length(parts) == 4 && parts[1] == "v1" && parts[2] == "job" && parts[4] == "receipt"
+            return handle_get_job_receipt(req, String(parts[3]))
+        elseif method == "GET" && length(parts) == 3 && parts[1] == "v1" && parts[2] == "job"
+            return handle_get_job(req, String(parts[3]))
+        elseif method == "GET" && length(parts) == 5 && parts[1] == "v1" && parts[2] == "receipt" && parts[4] == "proof"
+            return handle_merkle_proof(req, String(parts[3]), parse(Int, parts[5]))
         else
             return error_response(404, "no such route: $method $path")
         end
@@ -570,6 +799,12 @@ function main()
     println("  GET  /v1/identity/lookup         -- reverse lookup by pillar+pillar_id")
     println("  GET  /v1/identity/{canonical_id} -- get all pillar links for a canonical identity")
     println("  POST /v1/identity/{canonical_id}/link -- link a pillar-native ID to it")
+    println("  POST /v1/job                    -- submit a SimJobSpec (returns job_id)")
+    println("  POST /v1/job/{job_id}/run        -- execute a :dsl job (VeilSim) -> checkpoints")
+    println("  POST /v1/job/{job_id}/receipt    -- create the proof receipt (Merkle + quorum + dual seal)")
+    println("  GET  /v1/job/{job_id}            -- inspect a job")
+    println("  GET  /v1/job/{job_id}/receipt     -- fetch the proof receipt")
+    println("  GET  /v1/receipt/{job_id}/proof/{leaf} -- Merkle inclusion path for one checkpoint")
     HTTP.serve(router, "0.0.0.0", PORT)
 end
 
