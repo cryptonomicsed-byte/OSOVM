@@ -1,8 +1,16 @@
 # OSOVM Ecosystem Brief
 
 **Author:** OSOVM working session (Claude, scope-locked to OSOVM)
-**Date:** 2026-08-04
+**Date:** 2026-08-04, §5 re-audited and corrected 2026-08-29
 **Purpose:** Full honest picture of OSOVM — what it is, what it's for, how it connects to Vantage/Omo-Koda2/Buzz and the rest of the ecosystem, what's real vs. aspirational, and what a future project must do to integrate cleanly. Written for cross-pillar sharing.
+
+**2026-08-29 correction note:** the "130 Expansion-attribute real dispatch" item this
+doc originally listed as "actively in progress" (§5) was completed in full between
+this doc's original writing and now — confirmed by re-audit (see §5 below), not
+assumed. The rest of the document (§1-4, §6-8) still reflects real, unchanged
+architecture and was spot-checked, not rewritten. If you're reading this doc for
+current OSOVM state, trust §5's 2026-08-29 revision over any earlier claim in this
+file about opcode-dispatch completeness.
 
 **Legend:** ✅ built & verified · 🔧 built, partially verified · 🔜 designed, not built · ❓ known gap, unresolved
 
@@ -90,25 +98,95 @@ The Genesis Flaw Token / Òrìṣà-mythology layer is not decoration on top of 
 
 ## 5. What's Left to Complete — Honest Punch List
 
-**Actively in progress:**
-- **130 Expansion-attribute real dispatch** — 120 of 130 opcodes across 6 remaining clusters (Quadrinity Government, TechGnØŞ.EXE Church, SimaaS Hospital, Òrìṣà Spiritual, Economic Extensions, Extended Operations) still route to the decorative `call_ase_vault()` stub or (for a handful, like `ORISA_OBATALA`/`ORISA_ESU`) return hardcoded static dicts despite being in the "critical" dispatch list. Universal Work (10 opcodes) is done as of commit `5347770`. This is genuinely multi-session work — each cluster needs real, distinct state machines, not mechanical fill-in.
+*(Re-audited 2026-08-29 by a fresh session picking this repo up as unowned. Every
+claim below was independently verified this pass — real test runs, real `git log`
+evidence, real live HTTP calls against the deployed server, a real independent
+offline cryptographic re-verification — not inherited from the 2026-08-04 text,
+which was wrong about the single biggest item.)*
+
+**DONE since 2026-08-04 (this doc previously listed this as "actively in
+progress" — it is not, verify-don't-trust corrected this):**
+- **All 130 Expansion-attribute opcodes now have real VM-enforced dispatch.**
+  Confirmed two ways: (1) `git log --oneline -- src/oso_vm.jl` shows one commit
+  per cluster, each message explicitly "real VM-enforced dispatch for X cluster
+  (N opcodes)" — Universal Work (10, `5347770`), Quadrinity Government (20,
+  `9117b1a`), TechGnØŞ.EXE Church (25, `218619a`), SimaaS Hospital (20,
+  `7958345`), Òrìṣà Spiritual Layer (25, `3daec4c`), Economic Extensions (20,
+  `74b8cde`), Extended Operations (10, `0f02eb8`) = 130 exactly. (2) Re-ran
+  every cluster's test file live: `quadrinity_gov_test.jl` 71/71,
+  `church_test.jl` 81/81, `hospital_test.jl` 62/62, `orisa_test.jl` 62/62,
+  `economic_test.jl` 67/67, `extended_ops_test.jl` 34/34 — 377 passing tests,
+  not just a claim. (3) Confirmed the specific historical bug class this
+  project has repeatedly hit (real handler code present but unreachable
+  because `is_critical()`'s dispatch gate omitted the opcode) does NOT apply
+  here — read `is_critical()` directly (`src/oso_vm.jl:507`), every one of the
+  130 opcodes (0x40-0x53, 0x60-0x78, 0x80-0x93, 0xa1-0xb8, 0xc0-0xd3, 0xe0-0xe9)
+  is genuinely in the list, each range commented with which cluster it is.
+  One honest, deliberate exception kept out of scope on purpose: CALL/DELEGATE/
+  CREATE/SELFDESTRUCT (0x2c-0x2f) were NOT given real handlers — the code
+  comment explains why (they imply an arbitrary-sub-invocation contract-execution
+  submodel this opcode-dispatch VM doesn't have; faking one would be scope creep
+  and misrepresent real semantics) — flagged as an open design question, not
+  silently faked. This is the correct move per this project's own §8 rule #1.
+- **Universal Sim Job HTTP pipeline — live-verified end-to-end 2026-08-29,**
+  not just unit-tested. Ran the real chain against the actually-deployed
+  `osovm.service` (port 7778): `POST /v1/job` → real job_id → `POST /v1/job/
+  {id}/run` → 30 real checkpoints → `POST /v1/job/{id}/receipt` → real 9/12
+  witness quorum + real Merkle root + real dual seal → `GET /v1/receipt/{id}/
+  proof/5` → real inclusion path. Then independently re-verified that proof
+  **offline**, outside the server, using `scripts/verify_merkle_path.jl`
+  (`3d4129e`) — real cryptographic re-derivation of the root from the leaf +
+  sibling path, returned `VERIFIED`. Confirmed the verifier isn't a rubber
+  stamp by feeding it a tampered leaf hash — it correctly returned `FAILED`
+  (exit 1). The HTTP exposure work (`1605273`, `6667c91`, `e43f926`) is real
+  and live, not aspirational.
+- **PoWitness bridge (`witness_bridge/`, Rust) — code is real and verified,
+  on-chain deployment is real, only gas is missing.** `cargo test --release`:
+  10/10 pass (Ed25519 sign/verify round-trip, tamper/wrong-key rejection, key
+  lengths matching the Move contract's constants, Merkle determinism) —
+  **note:** this needed a toolchain upgrade to actually run on this VPS (system
+  `cargo` was 1.75.0, too old to parse the committed `Cargo.lock`'s v4 lockfile
+  format; installed `rustup` → stable 1.98.0, now genuinely runs here, not just
+  claimed to run elsewhere). `sui move build` on `proof_of_witness.move`:
+  compiles clean. The `techgnosis` package (containing `proof_of_witness`) is
+  **confirmed live on Sui testnet** — independently re-verified via
+  `sui client object <id>` (not just trusting `testnet.env`'s recorded IDs) for
+  all three: package `0xb3b6ef1d…` (Immutable), `WitnessOracle` object
+  `0x03380e98…` and `SensorRegistry` object `0x6b380504…` (both real Shared
+  objects, both traced back to the real publish tx `CLXmibXk…`). The one
+  genuinely remaining gap, confirmed live: the operator wallet
+  (`0x7bb327ba…`) holds ~0.0075 SUI, not enough for a real on-chain call, and
+  `sui client faucet` on this network is CLI-disabled ("please use the Web UI")
+  — same exact friction point already hit funding the Elegbara router deploy.
+  **This needs the owner to visit https://faucet.sui.io/?address=0x7bb327ba510769e9bdb3e1a5e7998cbe626b695b7351ba9cc540aa97617b7a87
+  once** — after that, `register-sensor`/`submit-attestation`/`submit-witness`
+  are real, ready-to-run commands (see `witness_bridge/README.md`), not
+  further engineering work.
 
 **Open decisions (waiting on the owner):**
-- `.tech` contract-language rework — currently `parse_function` **discards function bodies entirely**; `compile_tech()` builds IR purely from `@attribute` decorators via a fixed opcode lookup, output type doesn't match OSOVM's real IR type, and `compile_tech(` has **zero call sites anywhere in the codebase**. A design fork (tree-walking interpreter vs. transpile-to-Julia) was proposed; unanswered.
+- `.tech` contract-language rework — currently `parse_function` **discards function bodies entirely**; `compile_tech()` builds IR purely from `@attribute` decorators via a fixed opcode lookup, output type doesn't match OSOVM's real IR type, and `compile_tech(` has **zero call sites anywhere in the codebase**. A design fork (tree-walking interpreter vs. transpile-to-Julia) was proposed; unanswered. Re-checked 2026-08-29 — still zero call sites, still unanswered.
 - x402 vs. Nostr Lightning Zaps (NIP-57) vs. Cashu (NIP-60/61) for the *external-payment edge case* (paying a third-party compute provider with no prior on-chain relationship) — assessed, not decided. Not a fit for OSOVM's *core* settlement either way; core settlement already works via Sui/Elegbara.
 
 **Blocked on infrastructure:**
-- **CubeSandbox runtime** — needs a second VPS with nested-virt (`/dev/kvm`). Blocks: embedded PocketBase per sandbox, live Walrus upload call from the job pipeline, and the `:custom`-tier determinism self-test orchestration. Same blocker shared with Omo-Koda2/Vantage's Èṣù ephemeral-agent-spawning design — not two separate problems.
+- **CubeSandbox runtime** — needs a second VPS with nested-virt (`/dev/kvm`). Blocks: embedded PocketBase per sandbox, live Walrus upload call from the job pipeline, and the `:custom`-tier determinism self-test orchestration. Same blocker shared with Omo-Koda2/Vantage's Èṣù ephemeral-agent-spawning design — not two separate problems. Confirmed still true 2026-08-29 (`POST /v1/job/{id}/run` on a `:custom`-kind job returns a real 409 naming this exact blocker, not a silent failure).
 
 **Known, documented gaps (not hidden, not urgent):**
 - Nautilus attestation verifies code-measurement only, not real TEE hardware signatures — no real enclave deployed anywhere in the ecosystem.
-- OSOVM↔AIO citizenship wiring (Council-of-12/inheritance opcodes → real on-chain citizenship contracts) designed but not verified end-to-end.
+- OSOVM↔AIO citizenship wiring (Council-of-12/inheritance opcodes → real on-chain citizenship contracts) designed but not verified end-to-end. Re-checked 2026-08-29: grepped `src/*.jl` for "citizenship"/"AIO" — one incidental comment reference (a tithe-constant note), no real wiring code found. Still accurately described as "designed, not built" — genuinely underspecified for a future session to pick up without more cross-pillar context on the actual AIO/aio-sui contracts, not a quick follow-up.
 
 **Research, not yet scoped into a build:**
 - Nostr NIP audit for job-economy/discovery: **NIP-99 (Classified Listings) + NIP-69 (Peer-to-peer Order events)** assessed as the primary candidate for job-posting/bid discovery (riding an existing relay instead of bespoke infra). NIP-13 (PoW) for spam-gating. NIP-03 (OpenTimestamps) as a better attestation-adjacent candidate than NIP-85. **NIP-90 (Data Vending Machines) was investigated and rejected** — confirmed via the live `nostr-protocol/nips` repo to be explicitly marked `unrecommended`/deprecated by its own maintainers ("this got totally out of control, prefer use-case-specific microstandards").
 
 **Settled, not actionable:**
 - PR #1/#2 on GitHub intentionally left open (superseded content, owner's explicit choice).
+
+**Note on other docs in this repo (2026-08-29):** `THREAD_STATE.md` (dated Nov 11
+2025) describes an entirely different, superseded plan — a "777 veils / TechGnos
+@veil directive" rebuild with every phase marked "NOT STARTED" — that is not what
+actually got built (the real path was the 8-cluster Expansion-attribute dispatch
+work this section documents). It's marked superseded at the top of that file
+rather than deleted, so the history stays but a future reader isn't misled into
+thinking that plan is still live or current.
 
 ---
 

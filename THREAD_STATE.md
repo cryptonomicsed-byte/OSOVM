@@ -1,6 +1,19 @@
 # 🤍🗿⚖️🕊️🌄 THREAD STATE & CONTEXT MANIFEST
+
+> **⚠️ SUPERSEDED (2026-08-29):** This document describes a "777 veils /
+> TechGnos `@veil` directive" rebuild plan that was never executed as written
+> below — every phase here is still marked "NOT STARTED" from Nov 2025. What
+> actually got built instead, and is real and verified as of 2026-08-29, is
+> the 8-cluster Expansion-attribute VM dispatch work (Universal Work,
+> Quadrinity Government, TechGnØŞ.EXE Church, SimaaS Hospital, Òrìṣà
+> Spiritual, Economic Extensions, Extended Operations = 130 opcodes, all with
+> real VM-enforced dispatch), plus the Universal Sim Job HTTP pipeline and
+> PoWitness bridge. See `OSOVM_ECOSYSTEM_BRIEF.md` §5 for the current, verified
+> state. Kept here for history, not as a live plan — do not resume this phase
+> breakdown as if it's current.
+
 **Last Updated**: November 11, 2025  
-**Status**: LOCKED & READY TO BUILD  
+**Status**: LOCKED & READY TO BUILD (historical — see notice above)  
 **Commit Lock**: 894a04a (Build plan) → 40a91b0 (Baseline)
 
 ---
