@@ -1,0 +1,13 @@
+[Unit]
+Description=ỌSỌVM HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/OSOVM
+ExecStart=/usr/bin/julia --project=. src/server_main.jl
+Restart=on-failure
+Environment=OSOVM_PORT=7780
+
+[Install]
+WantedBy=multi-user.target

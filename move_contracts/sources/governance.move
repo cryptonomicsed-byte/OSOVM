@@ -28,6 +28,13 @@ module techgnosis::governance {
     const PROPOSAL_TYPE_PARAMETER_CHANGE: u8 = 2;
     const PROPOSAL_TYPE_EMERGENCY_PAUSE: u8 = 3;
     const PROPOSAL_TYPE_COUNCIL_CHANGE: u8 = 4;
+    // Grant proposal type constant
+    const PROPOSAL_TYPE_GRANT: u8 = 5;
+
+    // Grant proposal constants
+    const GRANT_QUORUM: u64 = 5;                       // 5/12 for grants
+    const GRANT_TIMELOCK: u64 = 259_200;               // 3 days in seconds
+    const MAX_GRANT_MICRO_ASE: u64 = 100_000_000_000;  // 100,000 Àṣẹ max
 
     // ===== Errors =====
     const E_NOT_COUNCIL_MEMBER: u64 = 1;
@@ -39,8 +46,24 @@ module techgnosis::governance {
     const E_DUPLICATE_VOTE: u64 = 7;
     const E_PROPOSAL_EXECUTED: u64 = 8;
     const E_PROPOSAL_REJECTED: u64 = 9;
+    const E_GRANT_TOO_LARGE: u64 = 10;
+    const E_INVALID_PURPOSE: u64 = 11;
 
     // ===== Events =====
+    public struct GrantProposalCreated has copy, drop {
+        proposal_id: u64,
+        proposer: address,
+        recipient: address,
+        amount_micro_ase: u64,
+        veil_id: u64,
+    }
+
+    public struct GrantProposalExecuted has copy, drop {
+        proposal_id: u64,
+        recipient: address,
+        amount_micro_ase: u64,
+    }
+
     public struct ProposalCreated has copy, drop {
         proposal_id: u64,
         proposer: address,
@@ -68,6 +91,25 @@ module techgnosis::governance {
     }
 
     // ===== Structs =====
+
+    /// A grant proposal requesting Àṣẹ from the Elegbára Grants bucket (10%).
+    /// Separate from generic treasury proposals — grant proposals have a 3-day
+    /// timelock (vs 7 days) and require only 5/12 quorum (research grants are
+    /// lower-stakes than treasury changes).
+    public struct GrantProposal has store {
+        id: u64,
+        proposer: address,
+        recipient: address,           // who receives the Àṣẹ
+        amount_micro_ase: u64,        // requested amount in micro-Àṣẹ
+        purpose: vector<u8>,          // human-readable purpose (≤256 bytes)
+        veil_id: u64,                 // which veil this grant funds (0 = open)
+        votes_for: u64,               // bitmask (12-bit)
+        votes_against: u64,           // bitmask (12-bit)
+        created_at: u64,              // epoch seconds
+        timelock_release: u64,        // created_at + 3 days
+        executed: bool,
+        rejected: bool,
+    }
 
     /// Governance proposal
     public struct Proposal has store {
@@ -97,6 +139,8 @@ module techgnosis::governance {
         next_proposal_id: u64,
         proposals: Table<u64, Proposal>,
         member_nonces: Table<address, u64>, // Replay protection
+        grant_proposals: Table<u64, GrantProposal>,
+        grant_proposal_count: u64,
     }
 
     /// Treasury allocation proposal data
@@ -125,6 +169,8 @@ module techgnosis::governance {
             next_proposal_id: 1,
             proposals: table::new<u64, Proposal>(ctx),
             member_nonces: table::new<address, u64>(ctx),
+            grant_proposals: table::new<u64, GrantProposal>(ctx),
+            grant_proposal_count: 0u64,
         };
         transfer::share_object(contract);
     }
@@ -335,5 +381,57 @@ module techgnosis::governance {
 
     public fun proposal_executed(gov: &GovernanceContract, proposal_id: u64): bool {
         table::borrow(&gov.proposals, proposal_id).executed
+    }
+
+    // ===== Grant Proposals =====
+
+    /// Submit a grant proposal for Àṣẹ from the Elegbára Grants bucket.
+    /// Any council member can propose; requires 5/12 quorum + 3-day timelock.
+    public fun submit_grant_proposal(
+        gov: &mut GovernanceContract,
+        recipient: address,
+        amount_micro_ase: u64,
+        purpose: vector<u8>,
+        veil_id: u64,
+        ctx: &mut TxContext,
+    ) {
+        let proposer = tx_context::sender(ctx);
+        assert!(vec_set::contains(&gov.council_members, &proposer), E_NOT_COUNCIL_MEMBER);
+        assert!(amount_micro_ase <= MAX_GRANT_MICRO_ASE, E_GRANT_TOO_LARGE);
+        assert!(vector::length(&purpose) > 0 && vector::length(&purpose) <= 256, E_INVALID_PURPOSE);
+
+        let now = tx_context::epoch(ctx); // epoch as time proxy
+        let id = gov.grant_proposal_count;
+        gov.grant_proposal_count = id + 1;
+
+        let proposal = GrantProposal {
+            id,
+            proposer,
+            recipient,
+            amount_micro_ase,
+            purpose,
+            veil_id,
+            votes_for: 0,
+            votes_against: 0,
+            created_at: now,
+            timelock_release: now + GRANT_TIMELOCK,
+            executed: false,
+            rejected: false,
+        };
+
+        table::add(&mut gov.grant_proposals, id, proposal);
+
+        event::emit(GrantProposalCreated {
+            proposal_id: id,
+            proposer,
+            recipient,
+            amount_micro_ase,
+            veil_id,
+        });
+    }
+
+    /// Get the number of grant proposals submitted.
+    public fun grant_proposal_count(gov: &GovernanceContract): u64 {
+        gov.grant_proposal_count
     }
 }

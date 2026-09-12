@@ -1,280 +1,414 @@
-/// Àṣẹ Token Module
-/// Sacred cryptocurrency of the Techgnosis ecosystem
-/// Implements dual-mint system: Proof-of-Simulation + Proof-of-Witness
-/// 
-/// Key Features:
-/// - Total supply: 2,880 tokens
-/// - Halving schedule: 50 → 25 → 12.5 (Bitcoin-style)
-/// - Tithe distribution: 3.69% (50% Shrine, 25% Inheritance, 15% AIO, 10% Burn)
-/// - Inheritance APY: 11.11% eternal compounding
-/// - Sabbath freeze: No transactions on Saturday UTC
-/// - 1440 inheritance wallets with 7-year eligibility cycle
+/// Àṣẹ Token Module — canonical settlement layer for ỌSỌVM.
 ///
-/// Spiritual reference:
-/// "Àṣẹ. Àṣẹ. Àṣẹ." - The three-fold blessing of manifestation
+/// ═══ LOCKED 2026-09-10 — conforms to OSOVM_CANONICAL_ARCHITECTURE.md ═══
+///
+/// Supply: 1,440 Àṣẹ/day — FIXED FOREVER. No halving. No cap.
+///   Annual: 525,600 Àṣẹ/year
+///   Genesis: 2,880 tokens (2 days of emission pre-minted at genesis)
+///
+/// Tithe: 3.69% (369 bps) on every mint/settlement — LOCKED (Tesla 369 vortex rate).
+///   Routes through Éṣù-Elegbára router to 8 sub-wallets:
+///     VeilSim 30% · R&D 20% · Governance 10% · Reserve 10%
+///     Lottery 10% · Grants 10% · UBI 5% · Sabbath Reserve 5%
+///
+/// Mint flow: MintAuthorization (from ỌSỌVM RUNTIME) → mint_ase() → Sui Àṣẹ
+///   RUNTIME signs the authorization. Only this contract executes mint.
+///   Direct calls from proof handlers = non-conformant.
+///
+/// Sabbath: No minting on Saturday UTC (sui::clock timestamp).
 
 module techgnosis::ase {
     use sui::object::{Self, UID};
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
-    use sui::coin::{Self, Coin};
+    use sui::coin::{Self, Coin, TreasuryCap};
     use sui::balance::{Self, Balance};
-    use sui::table::{Self, Table};
-    use std::vector;
+    use sui::clock::{Self, Clock};
+    use std::string::{Self, String};
 
-    // ===== Constants =====
-    const TOTAL_SUPPLY: u64 = 2_880_000_000_000; // 2880 Àṣẹ (6 decimal places)
-    const TITHE_RATE: u64 = 369; // 3.69% expressed as basis points (369 / 10000)
-    const SHRINE_SHARE: u64 = 5000; // 50% of tithe
-    const INHERITANCE_SHARE: u64 = 2500; // 25% of tithe
-    const AIO_SHARE: u64 = 1500; // 15% of tithe
-    const BURN_SHARE: u64 = 1000; // 10% of tithe
-    const INHERITANCE_APY: u64 = 1111; // 11.11% APY (11_110 basis points)
-    const HALVING_INTERVAL: u64 = 1_440_000; // Halving every ~100 days (blocks)
-    const SECONDS_PER_YEAR: u64 = 31_536_000;
+    // ─── Emission constants ───────────────────────────────────────────────────
 
-    // Sabbath freeze: Saturday is day 6 (0 = Sunday)
-    const SABBATH_DAY: u64 = 6;
+    /// 1 Àṣẹ per minute in micro-Àṣẹ (6 decimal places).
+    const MICRO_ASE_PER_MINUTE: u64 = 1_000_000;
+
+    /// 1,440 Àṣẹ/day — FIXED FOREVER. No halving. No cap.
+    const DAILY_EMISSION_MICRO: u64 = 1_440_000_000;
+
+    /// Genesis pre-mint: 2 days of emission (2,880 Àṣẹ).
+    const GENESIS_SUPPLY_MICRO: u64 = 2_880_000_000;
+
+    /// 1,440 inheritance wallets — equals minutes per day by design.
+    const INHERITANCE_WALLET_COUNT: u64 = 1_440;
+
+    // ─── Tithe constants ──────────────────────────────────────────────────────
+
+    /// 3.69% Éṣù tithe — LOCKED. Do NOT change to 7.77%.
+    /// Tesla 369 vortex rate. AIO context only.
+    const TITHE_BPS: u64 = 369;
+
+    /// Elegbára 8 sub-wallet basis points (must sum to 10_000).
+    const VEILSIM_BPS:         u64 = 3_000; // 30%
+    const RD_BPS:              u64 = 2_000; // 20%
+    const GOVERNANCE_BPS:      u64 = 1_000; // 10%
+    const RESERVE_BPS:         u64 = 1_000; // 10%
+    const LOTTERY_BPS:         u64 = 1_000; // 10%
+    const GRANTS_BPS:          u64 = 1_000; // 10%
+    const UBI_BPS:             u64 =   500; //  5%
+    const SABBATH_RESERVE_BPS: u64 =   500; //  5%
+    // sum = 10_000 ✓
+
+    // ─── Sabbath ──────────────────────────────────────────────────────────────
+
     const SECONDS_PER_DAY: u64 = 86_400;
+    // Unix epoch (1970-01-01) was a Thursday.
+    // (unix_day + 4) % 7 → 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+    const SATURDAY: u64 = 6;
 
-    // ===== Errors =====
-    const E_NOT_AUTHORIZED: u64 = 1;
-    const E_SABBATH_FROZEN: u64 = 2;
-    const E_INSUFFICIENT_BALANCE: u64 = 3;
-    const E_INVALID_TITHE_SPLIT: u64 = 4;
-    const E_OVERFLOW: u64 = 5;
-    const E_HALVING_OVERFLOW: u64 = 6;
+    // ─── Errors ───────────────────────────────────────────────────────────────
 
-    // ===== Structs =====
+    const E_NOT_AUTHORIZED:    u64 = 1;
+    const E_SABBATH_FROZEN:    u64 = 2;
+    const E_INVALID_RECEIPT:   u64 = 3;
+    const E_ALREADY_CLAIMED:   u64 = 4;
+    const E_BELOW_DIFFICULTY:  u64 = 5;
 
-    /// The Àṣẹ token itself - maintains supply and tracks minting/burning
+    // ─── One-time witness ─────────────────────────────────────────────────────
+
     public struct ASE has drop {}
 
-    /// Treasury for collecting tithe distributions
-    public struct Treasury has key {
+    // ─── Mint authority ───────────────────────────────────────────────────────
+
+    /// Holds the TreasuryCap — only ỌSỌVM RUNTIME address may call mint_ase().
+    public struct OsovmMintCap has key {
         id: UID,
-        shrine: Balance<ASE>,
-        inheritance: Balance<ASE>,
-        aio: Balance<ASE>,
-        burn: Balance<ASE>,
+        cap: TreasuryCap<ASE>,
+        /// Address of the authorized ỌSỌVM RUNTIME signer.
+        runtime_address: address,
+        /// Total micro-Àṣẹ minted since genesis (monotonically increasing, no cap).
+        total_minted: u64,
     }
 
-    /// Inheritance vault for 1440 wallets with 7-year lifecycle
+    // ─── Éṣù-Elegbára Router ─────────────────────────────────────────────────
+
+    /// Shared object — receives all 3.69% tithes and routes to 8 sub-wallets.
+    /// Never mints. Only routes flows already minted.
+    public struct ElegbaraRouter has key {
+        id: UID,
+        /// Sub-wallet balances (basis points above).
+        veilsim:         Balance<ASE>,
+        rd:              Balance<ASE>,
+        governance:      Balance<ASE>,
+        reserve:         Balance<ASE>,
+        lottery:         Balance<ASE>,
+        grants:          Balance<ASE>,
+        ubi:             Balance<ASE>,
+        sabbath_reserve: Balance<ASE>,
+        /// Admin who can withdraw from reserve (WhiteGate 3-of-5 in prod).
+        admin: address,
+    }
+
+    // ─── MintAuthorization ────────────────────────────────────────────────────
+
+    /// Issued by ỌSỌVM RUNTIME after DailyEmissionAllocator.allocate_minute().
+    /// Consumed once — destroyed on use (prevents double-mint).
+    public struct MintAuthorization has key {
+        id: UID,
+        /// Worker DID receiving the allocation.
+        worker_address: address,
+        /// micro-Àṣẹ to mint (net after tithe is applied from gross).
+        gross_micro_ase: u64,
+        /// epoch_minute this allocation covers.
+        epoch_minute: u64,
+        /// SHA256 receipt hash from DailyEmissionAllocator (chain anchor).
+        receipt_hash: vector<u8>,
+    }
+
+    // ─── InheritanceVault ─────────────────────────────────────────────────────
+
+    /// One of 1,440 vaults — claimed by first T5 agents, receives emission
+    /// when no valid sim occupies a minute's slot.
     public struct InheritanceVault has key {
         id: UID,
-        wallet_id: u64, // 1-1440
+        /// Wallet index 1–1,440.
+        wallet_id: u64,
         balance: Balance<ASE>,
-        last_apy_accrual: u64, // Unix timestamp
-        creation_epoch: u64,
+        /// DID of the T5 agent that claimed this vault. Empty until claimed.
+        owner_did: String,
     }
 
-    /// Minting governor tracks halving schedule and total supply
-    public struct MintingGovernor has key {
-        id: UID,
-        total_minted: u64,
-        current_halving_epoch: u64,
-        halving_counter: u64,
-    }
+    // ─── Init ─────────────────────────────────────────────────────────────────
 
-    /// Global config for Sabbath freeze and governance
-    public struct GlobalConfig has key {
-        id: UID,
-        admin: address,
-        is_paused: bool,
-    }
+    fun init(witness: ASE, ctx: &mut TxContext) {
+        let (mut cap, metadata) = coin::create_currency(
+            witness,
+            6,                          // 6 decimal places
+            b"ASE",
+            b"Àṣẹ",
+            b"Earned token of the ỌSỌVM ecosystem. 1,440/day. No halving.",
+            std::option::none(),
+            ctx,
+        );
 
-    // ===== Init =====
+        // Genesis pre-mint: 2,880 Àṣẹ (2 days of emission).
+        // 1 Àṣẹ → genesis wallet #0001 (transferable).
+        // 1,439 Ase → inheritance wallets #0002–#1440 (soul-bound, handled off-chain at genesis).
+        // The genesis mint here covers the transferable 1 Àṣẹ only.
+        let genesis_coin = coin::mint(&mut cap, 1_000_000, ctx);
+        transfer::public_transfer(genesis_coin, tx_context::sender(ctx));
 
-    fun init(ctx: &mut TxContext) {
-        // Create Treasury
-        let treasury = Treasury {
+        let mint_cap = OsovmMintCap {
             id: object::new(ctx),
-            shrine: balance::zero<ASE>(),
-            inheritance: balance::zero<ASE>(),
-            aio: balance::zero<ASE>(),
-            burn: balance::zero<ASE>(),
+            cap,
+            runtime_address: tx_context::sender(ctx),
+            total_minted: 1_000_000, // genesis token counted
         };
-        transfer::share_object(treasury);
+        transfer::share_object(mint_cap);
 
-        // Create Minting Governor
-        let governor = MintingGovernor {
+        let router = ElegbaraRouter {
             id: object::new(ctx),
-            total_minted: 0,
-            current_halving_epoch: TOTAL_SUPPLY / 2, // First halving at 1440
-            halving_counter: 0,
-        };
-        transfer::share_object(governor);
-
-        // Create Global Config
-        let config = GlobalConfig {
-            id: object::new(ctx),
+            veilsim:         balance::zero<ASE>(),
+            rd:              balance::zero<ASE>(),
+            governance:      balance::zero<ASE>(),
+            reserve:         balance::zero<ASE>(),
+            lottery:         balance::zero<ASE>(),
+            grants:          balance::zero<ASE>(),
+            ubi:             balance::zero<ASE>(),
+            sabbath_reserve: balance::zero<ASE>(),
             admin: tx_context::sender(ctx),
-            is_paused: false,
         };
-        transfer::share_object(config);
+        transfer::share_object(router);
+
+        transfer::public_freeze_object(metadata);
     }
 
-    // ===== Public Functions =====
+    // ─── Mint ─────────────────────────────────────────────────────────────────
 
-    /// Mint Àṣẹ tokens via @impact (immediate minting)
-    /// Parameters: ase_amount (in micros, 6 decimals)
-    public fun mint_impact(
-        amount: u64,
-        governor: &mut MintingGovernor,
-        treasury: &mut Treasury,
+    /// Canonical mint entry point — called only by Sui settlement after
+    /// ỌSỌVM RUNTIME issues a MintAuthorization.
+    ///
+    /// Flow: consumes MintAuthorization → mints gross → skims 3.69% Éṣù tithe
+    ///   → routes tithe to ElegbaraRouter → transfers net to worker.
+    public fun mint_ase(
+        auth: MintAuthorization,
+        mint_cap: &mut OsovmMintCap,
+        router: &mut ElegbaraRouter,
+        clock: &Clock,
         ctx: &mut TxContext,
-    ): Coin<ASE> {
-        assert!(!is_sabbath(ctx), E_SABBATH_FROZEN);
-        assert!(governor.total_minted + amount <= TOTAL_SUPPLY, E_OVERFLOW);
+    ) {
+        assert!(!is_sabbath(clock), E_SABBATH_FROZEN);
+        assert!(tx_context::sender(ctx) == mint_cap.runtime_address, E_NOT_AUTHORIZED);
 
-        // Update governor
-        governor.total_minted = governor.total_minted + amount;
+        let MintAuthorization {
+            id,
+            worker_address,
+            gross_micro_ase,
+            epoch_minute: _,
+            receipt_hash: _,
+        } = auth;
+        object::delete(id);
 
-        // Calculate and distribute tithe
-        let tithe_amount = (amount * TITHE_RATE) / 10_000;
-        let net_amount = amount - tithe_amount;
+        // Éṣù tithe is always skimmed FIRST.
+        let tithe_amount = eshu_tithe(gross_micro_ase);
+        let net_amount = gross_micro_ase - tithe_amount;
 
-        // Apply tithe split
-        apply_tithe_split(treasury, tithe_amount);
+        // Mint gross, split into tithe coin + net coin.
+        let mut gross_balance = coin::mint_balance(&mut mint_cap.cap, gross_micro_ase);
+        let tithe_balance = balance::split(&mut gross_balance, tithe_amount);
 
-        // Create coin with net amount
-        coin::from_balance(balance::increase_supply(&mut coin::supply<ASE>(), net_amount), ctx)
+        // Route tithe through Elegbára.
+        elegbara_route(router, tithe_balance);
+
+        // Transfer net to worker.
+        let net_coin = coin::from_balance(gross_balance, ctx);
+        transfer::public_transfer(net_coin, worker_address);
+
+        mint_cap.total_minted = mint_cap.total_minted + gross_micro_ase;
     }
 
-    /// Mint Àṣẹ tokens via @tithe (with tithe calculation)
-    public fun mint_tithe(
-        amount: u64,
-        governor: &mut MintingGovernor,
-        treasury: &mut Treasury,
+    /// Inheritance fallback: when no valid sim exists for a minute,
+    /// 1 Àṣẹ splits equally to all 1,440 inheritance vaults.
+    /// Called by RUNTIME once per minute when DailyEmissionAllocator fires fallback.
+    public fun mint_inheritance_fallback(
+        mint_cap: &mut OsovmMintCap,
+        router: &mut ElegbaraRouter,
+        vaults: &mut vector<InheritanceVault>,
+        clock: &Clock,
         ctx: &mut TxContext,
-    ): Coin<ASE> {
-        assert!(!is_sabbath(ctx), E_SABBATH_FROZEN);
-        assert!(governor.total_minted + amount <= TOTAL_SUPPLY, E_OVERFLOW);
+    ) {
+        assert!(!is_sabbath(clock), E_SABBATH_FROZEN);
+        assert!(tx_context::sender(ctx) == mint_cap.runtime_address, E_NOT_AUTHORIZED);
 
-        governor.total_minted = governor.total_minted + amount;
-        let tithe = (amount * TITHE_RATE) / 10_000;
-        apply_tithe_split(treasury, tithe);
+        let gross = MICRO_ASE_PER_MINUTE;
+        let tithe_amount = eshu_tithe(gross);
+        let net = gross - tithe_amount;
 
-        coin::from_balance(balance::increase_supply(&mut coin::supply<ASE>(), amount - tithe), ctx)
+        let mut gross_balance = coin::mint_balance(&mut mint_cap.cap, gross);
+        let tithe_balance = balance::split(&mut gross_balance, tithe_amount);
+        elegbara_route(router, tithe_balance);
+
+        // Distribute net equally to all vaults provided.
+        let n = std::vector::length(vaults);
+        if (n == 0) {
+            // No vaults yet — park remainder in sabbath_reserve.
+            balance::join(&mut router.sabbath_reserve, gross_balance);
+            return
+        };
+        let per_vault = net / (n as u64);
+        let mut remainder = net - per_vault * (n as u64);
+        let mut i = 0;
+        while (i < n) {
+            let vault = std::vector::borrow_mut(vaults, i);
+            let share = balance::split(&mut gross_balance, per_vault);
+            balance::join(&mut vault.balance, share);
+            i = i + 1;
+        };
+        // Dust goes to sabbath_reserve.
+        if (balance::value(&gross_balance) > 0) {
+            balance::join(&mut router.sabbath_reserve, gross_balance);
+        } else {
+            balance::destroy_zero(gross_balance);
+        };
+
+        mint_cap.total_minted = mint_cap.total_minted + gross;
     }
 
-    /// Create inheritance vault for a new wallet (1-1440)
+    // ─── Éṣù tithe + Elegbára routing ────────────────────────────────────────
+
+    /// Canonical tithe: 3.69% of any amount, rounded down.
+    public fun eshu_tithe(amount: u64): u64 {
+        (amount * TITHE_BPS) / 10_000
+    }
+
+    /// Route a tithe Balance through the 8 Elegbára sub-wallets.
+    /// Sub-wallets are strictly isolated. Router never holds the net.
+    public fun elegbara_route(router: &mut ElegbaraRouter, mut tithe: Balance<ASE>) {
+        let total = balance::value(&tithe);
+
+        // Split in BPS order; last bucket absorbs rounding dust.
+        let veilsim_amt    = (total * VEILSIM_BPS)         / 10_000;
+        let rd_amt         = (total * RD_BPS)              / 10_000;
+        let governance_amt = (total * GOVERNANCE_BPS)      / 10_000;
+        let reserve_amt    = (total * RESERVE_BPS)         / 10_000;
+        let lottery_amt    = (total * LOTTERY_BPS)         / 10_000;
+        let grants_amt     = (total * GRANTS_BPS)          / 10_000;
+        let ubi_amt        = (total * UBI_BPS)             / 10_000;
+        // Sabbath reserve absorbs remainder to ensure full distribution.
+
+        balance::join(&mut router.veilsim,    balance::split(&mut tithe, veilsim_amt));
+        balance::join(&mut router.rd,         balance::split(&mut tithe, rd_amt));
+        balance::join(&mut router.governance, balance::split(&mut tithe, governance_amt));
+        balance::join(&mut router.reserve,    balance::split(&mut tithe, reserve_amt));
+        balance::join(&mut router.lottery,    balance::split(&mut tithe, lottery_amt));
+        balance::join(&mut router.grants,     balance::split(&mut tithe, grants_amt));
+        balance::join(&mut router.ubi,        balance::split(&mut tithe, ubi_amt));
+        // Remainder (sabbath_reserve share + rounding dust) → sabbath_reserve.
+        balance::join(&mut router.sabbath_reserve, tithe);
+    }
+
+    // ─── Sabbath gate ─────────────────────────────────────────────────────────
+
+    /// True when the current Clock timestamp falls on Saturday UTC.
+    /// Uses sui::clock for real wall-clock time (not epoch counter).
+    public fun is_sabbath(clock: &Clock): bool {
+        let ms = clock::timestamp_ms(clock);
+        let unix_sec = ms / 1_000;
+        let unix_day = unix_sec / SECONDS_PER_DAY;
+        // Unix epoch (1970-01-01) = Thursday.
+        // (unix_day + 4) % 7: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+        (unix_day + 4) % 7 == SATURDAY
+    }
+
+    // ─── InheritanceVault management ─────────────────────────────────────────
+
     public fun create_inheritance_vault(
         wallet_id: u64,
         ctx: &mut TxContext,
     ): InheritanceVault {
-        assert!(wallet_id >= 1 && wallet_id <= 1440, 100); // Invalid wallet ID
-
+        assert!(wallet_id >= 1 && wallet_id <= INHERITANCE_WALLET_COUNT, 100);
         InheritanceVault {
             id: object::new(ctx),
             wallet_id,
             balance: balance::zero<ASE>(),
-            last_apy_accrual: tx_context::epoch(ctx),
-            creation_epoch: tx_context::epoch(ctx),
+            owner_did: string::utf8(b""),
         }
     }
 
-    /// Deposit into inheritance vault
-    public fun deposit_to_inheritance(
+    /// Claim a vault — sets owner DID. First-come-first-served for T5 agents.
+    public fun claim_inheritance_vault(
         vault: &mut InheritanceVault,
-        coin: Coin<ASE>,
+        did: vector<u8>,
     ) {
-        let amount = coin::value(&coin);
+        assert!(string::length(&vault.owner_did) == 0, E_ALREADY_CLAIMED);
+        vault.owner_did = string::utf8(did);
+    }
+
+    public fun deposit_to_inheritance(vault: &mut InheritanceVault, coin: Coin<ASE>) {
         balance::join(&mut vault.balance, coin::into_balance(coin));
     }
 
-    /// Accrue APY interest (11.11% annually)
-    public fun accrue_apy(
-        vault: &mut InheritanceVault,
+    // ─── MintAuthorization creation (RUNTIME only) ───────────────────────────
+
+    /// Only ỌSỌVM RUNTIME calls this — creates the authorization object
+    /// that settlement will consume in mint_ase().
+    public fun create_mint_authorization(
+        mint_cap: &OsovmMintCap,
+        worker_address: address,
+        gross_micro_ase: u64,
+        epoch_minute: u64,
+        receipt_hash: vector<u8>,
+        ctx: &mut TxContext,
+    ): MintAuthorization {
+        assert!(tx_context::sender(ctx) == mint_cap.runtime_address, E_NOT_AUTHORIZED);
+        MintAuthorization {
+            id: object::new(ctx),
+            worker_address,
+            gross_micro_ase,
+            epoch_minute,
+            receipt_hash,
+        }
+    }
+
+    // ─── Admin ────────────────────────────────────────────────────────────────
+
+    /// Update the ỌSỌVM RUNTIME address (admin migration).
+    public fun set_runtime_address(
+        mint_cap: &mut OsovmMintCap,
+        new_runtime: address,
         ctx: &TxContext,
     ) {
-        let now = tx_context::epoch(ctx);
-        let time_elapsed = now - vault.last_apy_accrual;
-
-        // APY = 11.11% = 11_110 basis points
-        // New balance = balance * (1 + 0.1111) ^ (time_elapsed / seconds_per_year)
-        // Simplified: accrue based on elapsed time
-        let balance_value = balance::value(&vault.balance);
-        let interest = (balance_value * INHERITANCE_APY * time_elapsed) / (10_000 * SECONDS_PER_YEAR);
-
-        // Add interest (in production, would use formal interest calculation)
-        // For now, just track that APY has been calculated
-        vault.last_apy_accrual = now;
+        assert!(tx_context::sender(ctx) == mint_cap.runtime_address, E_NOT_AUTHORIZED);
+        mint_cap.runtime_address = new_runtime;
     }
 
-    /// Check if current time is Sabbath (Saturday UTC)
-    /// Returns true if transaction occurs on Saturday
-    fun is_sabbath(ctx: &TxContext): bool {
-        let timestamp = tx_context::epoch(ctx);
-        let day_of_week = (timestamp / SECONDS_PER_DAY) % 7;
-        day_of_week == SABBATH_DAY
+    /// Reserve withdrawal — WhiteGate 3-of-5 multisig in prod; admin-only here.
+    public fun withdraw_reserve(
+        router: &mut ElegbaraRouter,
+        amount: u64,
+        ctx: &mut TxContext,
+    ): Coin<ASE> {
+        assert!(tx_context::sender(ctx) == router.admin, E_NOT_AUTHORIZED);
+        coin::from_balance(balance::split(&mut router.reserve, amount), ctx)
     }
 
-    /// Apply tithe split to treasury
-    fun apply_tithe_split(treasury: &mut Treasury, tithe_amount: u64) {
-        let shrine_amount = (tithe_amount * SHRINE_SHARE) / 10_000;
-        let inheritance_amount = (tithe_amount * INHERITANCE_SHARE) / 10_000;
-        let aio_amount = (tithe_amount * AIO_SHARE) / 10_000;
-        let burn_amount = tithe_amount - shrine_amount - inheritance_amount - aio_amount;
+    // ─── Getters ──────────────────────────────────────────────────────────────
 
-        // Distribute to treasury components
-        balance::join(&mut treasury.shrine, balance::increase_supply(&mut coin::supply<ASE>(), shrine_amount));
-        balance::join(&mut treasury.inheritance, balance::increase_supply(&mut coin::supply<ASE>(), inheritance_amount));
-        balance::join(&mut treasury.aio, balance::increase_supply(&mut coin::supply<ASE>(), aio_amount));
-        balance::join(&mut treasury.burn, balance::increase_supply(&mut coin::supply<ASE>(), burn_amount));
-    }
+    public fun total_minted(mint_cap: &OsovmMintCap): u64 { mint_cap.total_minted }
+    public fun runtime_address(mint_cap: &OsovmMintCap): address { mint_cap.runtime_address }
 
-    /// Get current halving schedule value (reduces every HALVING_INTERVAL blocks)
-    public fun get_halving_value(governor: &MintingGovernor): u64 {
-        let halvings = governor.halving_counter;
-        let mut value = TOTAL_SUPPLY / 2; // Start with 50% of supply per halving period
-        let mut i = 0;
-        while (i < halvings) {
-            value = value / 2;
-            i = i + 1;
-        };
-        value
-    }
+    public fun router_veilsim(router: &ElegbaraRouter): u64    { balance::value(&router.veilsim) }
+    public fun router_rd(router: &ElegbaraRouter): u64         { balance::value(&router.rd) }
+    public fun router_governance(router: &ElegbaraRouter): u64 { balance::value(&router.governance) }
+    public fun router_reserve(router: &ElegbaraRouter): u64    { balance::value(&router.reserve) }
+    public fun router_lottery(router: &ElegbaraRouter): u64    { balance::value(&router.lottery) }
+    public fun router_grants(router: &ElegbaraRouter): u64     { balance::value(&router.grants) }
+    public fun router_ubi(router: &ElegbaraRouter): u64        { balance::value(&router.ubi) }
+    public fun router_sabbath(router: &ElegbaraRouter): u64    { balance::value(&router.sabbath_reserve) }
 
-    /// Trigger halving (admin only)
-    public fun trigger_halving(
-        governor: &mut MintingGovernor,
-        config: &GlobalConfig,
-        ctx: &TxContext,
-    ) {
-        assert!(tx_context::sender(ctx) == config.admin, E_NOT_AUTHORIZED);
-        assert!(governor.total_minted >= governor.current_halving_epoch, 101);
+    public fun vault_balance(vault: &InheritanceVault): u64    { balance::value(&vault.balance) }
+    public fun vault_wallet_id(vault: &InheritanceVault): u64  { vault.wallet_id }
+    public fun vault_owner_did(vault: &InheritanceVault): &String { &vault.owner_did }
 
-        governor.halving_counter = governor.halving_counter + 1;
-        let halving_value = get_halving_value(governor);
-        governor.current_halving_epoch = governor.total_minted + halving_value;
-    }
-
-    /// Emergency pause (admin only)
-    public fun set_paused(
-        config: &mut GlobalConfig,
-        paused: bool,
-        ctx: &TxContext,
-    ) {
-        assert!(tx_context::sender(ctx) == config.admin, E_NOT_AUTHORIZED);
-        config.is_paused = paused;
-    }
-
-    // ===== Getters =====
-
-    public fun total_minted(governor: &MintingGovernor): u64 {
-        governor.total_minted
-    }
-
-    public fun halving_counter(governor: &MintingGovernor): u64 {
-        governor.halving_counter
-    }
-
-    public fun vault_balance(vault: &InheritanceVault): u64 {
-        balance::value(&vault.balance)
-    }
-
-    public fun vault_wallet_id(vault: &InheritanceVault): u64 {
-        vault.wallet_id
-    }
+    public fun auth_worker(auth: &MintAuthorization): address  { auth.worker_address }
+    public fun auth_gross(auth: &MintAuthorization): u64       { auth.gross_micro_ase }
+    public fun auth_minute(auth: &MintAuthorization): u64      { auth.epoch_minute }
 }
