@@ -1,6 +1,6 @@
 @visualOS(
     name: "VeilOS",
-    version: "v7.7",
+    version: "v8.0",
     renderer: "Ọ̀ṢỌ́VM-GPU"
 ) {
 
@@ -10,9 +10,11 @@
 
     @veilLibrary {
         @search(filter: "category", sort: "novelty");
-        
+        @search(filter: "seven_function", sort: "dominant_strength");
+
         @card(veilId: uint16) {
             @display: {name, category, F1_threshold, cost};
+            @display: {seven_function, action_vessel, odu_base};
             @drag: enabled;
         }
     }
@@ -26,6 +28,22 @@
         @physics: Julia + Cannon.jl;
         @dragDrop: VeilLibrary → Canvas;
         @nodeEditor: n8n-style;
+
+        // Digital Twin overlay — shown when a WorldTile is selected
+        @twinOverlay(trigger: tile_select) {
+            @twinId: String;
+            @tile: {layer, x, z};
+            @stateVector: {
+                identity_odu: hex,
+                memory_odu:   hex,
+                field_odu:    hex,
+                simulation_odu: hex,
+            };
+            @dominantFunction: SevenFunction;
+            @primaryVessel: ActionVessel;
+            @composedSignature: hex;
+            @lastUpdated: timestamp;
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -37,6 +55,29 @@
         @physics: Julia + Cannon-WASM;
         @witnessPanel: 7/12 live;
         @mintButton: "Àṣẹ" on success;
+
+        // USF-7 semantic layer — active during simulation
+        @sevenPanel {
+            @activeFunction: SevenFunction;   // dominant function this sim step
+            @activeVessel:   ActionVessel;    // primary vessel for this function
+            @calendarSync: {
+                btc_function:      SevenFunction,
+                gregorian_function: SevenFunction,
+                spiral_alignment:  SpiralAlignment,
+                ritual_gate:       KooduRitualGate,
+                gate_multiplier:   float,
+            };
+            @agentProfile: SevenProfileDisplay; // strength bars per function
+        }
+
+        // GlyphIndex memory — surfaces the glyph node produced by this sim
+        @glyphPanel {
+            @glyph:        char;
+            @canonical_id: hex;
+            @odu_base:     uint8;
+            @odu_composed: uint16;
+            @merkle_root:  hex;
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -48,6 +89,36 @@
         @play: "Run Sim" (costs 7 Ase);
         @pause: "Pause";
         @reset: "Clear Canvas";
+
+        // Twin registry controls
+        @twinControls {
+            @registerTwin:     "Register Twin" (twin_id, tile, identity_odu);
+            @updateFieldOdu:   "Sync Field"    (field_odu from FieldDiviner);
+            @queryByFunction:  "Filter Sims"   (seven_function: SevenFunction);
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // DATA BINDINGS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @bindings {
+        // Seven layer reads from OSOVM Seven module
+        activeFunction   ← Seven.SevenCalendar.from_btc_height(btc_height);
+        activeVessel     ← Seven.primary_vessel(activeFunction);
+        ritualGate       ← Seven.SevenCalendar.ritual_gate(btc_height);
+        gateMultiplier   ← Seven.gate_multiplier(ritualGate);
+
+        // Twin state reads from WorldTiles registry
+        selectedTwin     ← WorldTiles.get_twin(tile_select.twin_id);
+        twinDominant     ← Seven.dominant_function(selectedTwin.state);
+
+        // Glyph produced from sim trajectory hash (GIX-FOLD-v1)
+        simGlyph         ← GlyphIndex.glyph_fold(GlyphIndex.content_hash(sim.trajectory_hash));
+        simOdu           ← GlyphIndex.odu_link(GlyphIndex.content_hash(sim.trajectory_hash));
+
+        // Sim library semantic filter
+        functionSims     ← WorldTiles.query_by_function(library, activeFunction);
     }
 
 }
