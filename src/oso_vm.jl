@@ -7,10 +7,12 @@ module OsoVM
 include("opcodes.jl")
 include("oso_compiler.jl")
 include("glyphindex.jl")
+include("seven.jl")
 
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
+using .Seven
 using SHA
 
 export execute_ir, VMState, create_vm
