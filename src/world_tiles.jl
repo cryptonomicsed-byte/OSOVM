@@ -7,11 +7,14 @@ module WorldTiles
 using Dates
 using SHA
 using Statistics
+using ..Seven
 
 export WorldTile, SimRecord, SimLibrary
 export create_tile, tile_key, tiles_in_range
 export submit_simulation, query_simulations, query_by_veil, consume_simulation
 export compute_sim_value, library_stats
+export DigitalTwin, register_twin, update_twin_state, get_twin
+export query_by_function, twin_stats
 
 # ============================================================================
 # 1. WORLD TILE — Spatial Index
@@ -93,6 +96,9 @@ mutable struct SimRecord
     consumption_count::Int       # How many agents consumed this
     multiplier::Float64          # 2x for consumed sims
 
+    # Semantic state at time of simulation (optional — populated when a Twin is present)
+    twin_state::Union{TwinStateVector, Nothing}
+
     # Anchoring
     chain_anchors::Dict{String,String}
 
@@ -110,9 +116,10 @@ The Sim Library is the marketplace where simulations are stored, indexed by
 tile, and queried by agents needing physics-validated trajectories.
 """
 mutable struct SimLibrary
-    records::Dict{String, SimRecord}        # sim_id -> record
-    tile_index::Dict{String, Vector{String}} # tile_key -> [sim_ids]
-    veil_index::Dict{Int, Vector{String}}   # veil_id -> [sim_ids]
+    records::Dict{String, SimRecord}         # sim_id → record
+    tile_index::Dict{String, Vector{String}} # tile_key → [sim_ids]
+    veil_index::Dict{Int, Vector{String}}    # veil_id → [sim_ids]
+    function_index::Dict{SevenFunction, Vector{String}} # dominant_function → [sim_ids]
 
     total_ase_minted::Float64
     total_ase_consumed::Float64
@@ -128,10 +135,51 @@ function SimLibrary(;f1_threshold::Float64=0.777, expiry_days::Int=49)::SimLibra
         Dict{String, SimRecord}(),
         Dict{String, Vector{String}}(),
         Dict{Int, Vector{String}}(),
+        Dict{SevenFunction, Vector{String}}(),
         0.0, 0.0, 0, 0,
         f1_threshold,
         expiry_days
     )
+end
+
+# ============================================================================
+# 3b. DIGITAL TWIN — 1:1 Semantic Representation of a Physical Entity
+# ============================================================================
+
+"""
+    DigitalTwin
+
+A 1:1 digital twin of a real-world entity at a given WorldTile.
+
+The twin carries a `TwinStateVector` that encodes its current semantic state
+across four Odù dimensions:
+  identity_odu   — stable, derived from the twin's unique seed
+  memory_odu     — changes as the twin's GlyphIndex root changes
+  field_odu      — updated by FieldDiviner at each BTC height
+  simulation_odu — updated after each Ọ̀ṢỌ́VM world-model cycle
+
+The `dominant_function` of the state vector tells Ọmọ Kọ́dà what kind of
+agency is most active for this twin right now — routing semantic decisions
+without reading the full memory or simulation state.
+"""
+mutable struct DigitalTwin
+    twin_id::String
+    tile::WorldTile
+    state::TwinStateVector
+    last_updated::DateTime
+    sim_history::Vector{String}   # sim_ids produced for this twin, newest first
+end
+
+function DigitalTwin(
+    twin_id::String,
+    tile::WorldTile,
+    identity_odu::UInt8;
+    memory_odu::UInt8=0x00,
+    field_odu::UInt8=0x00,
+    simulation_odu::UInt8=0x00
+)::DigitalTwin
+    state = TwinStateVector(identity_odu, memory_odu, field_odu, simulation_odu)
+    DigitalTwin(twin_id, tile, state, now(), String[])
 end
 
 # ============================================================================
@@ -154,7 +202,8 @@ function submit_simulation(
     energy_drift::Float64,
     robustness::Float64,
     trajectory_checkpoints::Vector{Dict{String,Any}},
-    chain_anchors::Dict{String,String}
+    chain_anchors::Dict{String,String};
+    twin_state::Union{TwinStateVector, Nothing}=nothing
 )::Union{SimRecord, Nothing}
 
     # Reject if F1 below threshold
@@ -189,6 +238,7 @@ function submit_simulation(
         0.0,
         0,
         CONSUMPTION_MULTIPLIER,
+        twin_state,
         chain_anchors,
         "validated",
         now() + Day(library.expiry_days)
@@ -214,6 +264,15 @@ function submit_simulation(
             library.veil_index[vid] = String[]
         end
         push!(library.veil_index[vid], sim_id)
+    end
+
+    # Index by dominant SevenFunction (only when twin_state is present)
+    if !isnothing(twin_state)
+        fn = dominant_function(twin_state)
+        if !haskey(library.function_index, fn)
+            library.function_index[fn] = String[]
+        end
+        push!(library.function_index[fn], sim_id)
     end
 
     println("[SimLibrary] ACCEPTED: $(sim_id) | F1=$(round(f1_score, digits=3)) | Tiles=$(length(covered)) | Cost=$(BASE_SIM_COST) Ase")
@@ -397,6 +456,96 @@ function library_stats(library::SimLibrary)::Dict{String,Any}
         "average_f1" => avg_f1,
         "unique_tiles_indexed" => length(library.tile_index),
         "unique_veils_indexed" => length(library.veil_index)
+    )
+end
+
+# ============================================================================
+# 9. DIGITAL TWIN REGISTRY
+# ============================================================================
+
+# Module-level registry: twin_id → DigitalTwin
+const TWIN_REGISTRY = Dict{String, DigitalTwin}()
+
+"""Register a new DigitalTwin (or replace an existing one)."""
+function register_twin(twin::DigitalTwin)::DigitalTwin
+    TWIN_REGISTRY[twin.twin_id] = twin
+    println("[TwinRegistry] REGISTERED: $(twin.twin_id) | tile=$(tile_key(twin.tile)) | dominant=$(dominant_function(twin.state))")
+    twin
+end
+
+"""
+    update_twin_state(twin_id, memory_odu, field_odu, simulation_odu)
+
+Update the mutable dimensions of a twin's TwinStateVector.
+Identity Odù is immutable — only memory/field/simulation change at runtime.
+"""
+function update_twin_state(
+    twin_id::String;
+    memory_odu::Union{UInt8, Nothing}=nothing,
+    field_odu::Union{UInt8, Nothing}=nothing,
+    simulation_odu::Union{UInt8, Nothing}=nothing
+)::Union{DigitalTwin, Nothing}
+    !haskey(TWIN_REGISTRY, twin_id) && return nothing
+    twin = TWIN_REGISTRY[twin_id]
+    old_state = twin.state
+    twin.state = TwinStateVector(
+        old_state.identity_odu,
+        isnothing(memory_odu)     ? old_state.memory_odu     : memory_odu,
+        isnothing(field_odu)      ? old_state.field_odu      : field_odu,
+        isnothing(simulation_odu) ? old_state.simulation_odu : simulation_odu
+    )
+    twin.last_updated = now()
+    twin
+end
+
+"""Look up a registered DigitalTwin by ID."""
+function get_twin(twin_id::String)::Union{DigitalTwin, Nothing}
+    get(TWIN_REGISTRY, twin_id, nothing)
+end
+
+# ============================================================================
+# 10. SEMANTIC QUERY — by SevenFunction
+# ============================================================================
+
+"""
+    query_by_function(library, f; min_f1, max_results)
+
+Query simulations whose twin_state had the given dominant SevenFunction
+at the time of simulation. Returns sims sorted by F1 descending.
+
+Use this to ask: "show me all validated Foundation-governed simulations
+near this tile" — grounding agent reasoning in semantically tagged history.
+"""
+function query_by_function(
+    library::SimLibrary,
+    f::SevenFunction;
+    min_f1::Float64=0.0,
+    max_results::Int=10
+)::Vector{SimRecord}
+    sim_ids = get(library.function_index, f, String[])
+    results = SimRecord[]
+    for sim_id in sim_ids
+        record = library.records[sim_id]
+        if record.status == "validated" && record.f1_score >= min_f1 && record.expires_at > now()
+            push!(results, record)
+        end
+    end
+    sort!(results, by=r -> -r.f1_score)
+    results[1:min(max_results, length(results))]
+end
+
+"""
+Statistics over the twin registry and function index.
+"""
+function twin_stats(library::SimLibrary)::Dict{String,Any}
+    fn_counts = Dict{String,Int}()
+    for (fn, ids) in library.function_index
+        fn_counts[universal_name(fn)] = length(ids)
+    end
+    Dict(
+        "registered_twins"  => length(TWIN_REGISTRY),
+        "sims_with_state"   => sum(length(v) for v in values(library.function_index); init=0),
+        "function_coverage" => fn_counts
     )
 end
 

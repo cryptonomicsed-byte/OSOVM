@@ -8,11 +8,13 @@ include("opcodes.jl")
 include("oso_compiler.jl")
 include("glyphindex.jl")
 include("seven.jl")
+include("world_tiles.jl")
 
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
 using .Seven
+using .WorldTiles
 using SHA
 
 export execute_ir, VMState, create_vm
