@@ -25,6 +25,11 @@ export CulturalAdapter, YorubaAdapter, MesopotamianAdapter, HermeticAdapter
 export function_for_day, from_btc_height, today_gregorian, ritual_gate, spiral_alignment
 export canonical_name, ascii_slug, description, tradition
 export ORISA_OPCODE_TO_FUNCTION, function_to_opcode
+export ActionVessel, ALL_VESSELS
+export governing_function, vessels_for_function, primary_vessel
+export vessel_from_odu, function_for_odu
+export TwinStateVector, identity_function, memory_function, field_function
+export simulation_function, dominant_function, composed_signature, as_array
 
 # ─── Constants (canonical — mirrors SacredTimeBridge and Koodu sacred_time.jl) ─
 
@@ -337,5 +342,139 @@ function is_resonance_day(btc_height::Union{Int, Nothing})::Bool
 end
 
 end # module SevenCalendar
+
+# ─── ActionVessel ─────────────────────────────────────────────────────────────
+#
+# The 16 operational domains of the Digital Calabash (If-Script).
+# Vessels are the second layer of the hierarchy:
+#   Seven (7) → Vessels (16) → Odù (256) → Composed (65,536)
+#
+# Top nibble of Odù byte selects the vessel (0x00–0x0F → 0–15).
+
+@enum ActionVessel begin
+    Genesis   = 0   # Initialize, covenant
+    Void      = 1   # Clear, release
+    Attention = 2   # Focus, signal/noise
+    Loop      = 3   # Pattern, iteration
+    Receipt   = 4   # Record, accountability
+    Mask      = 5   # Public/private split
+    Residue   = 6   # Behavioral echoes
+    Execution = 7   # Precision action
+    Swarm     = 8   # Collective coordination
+    Restraint = 9   # Ethical limits
+    Migration = 10  # Portability, identity
+    Consent   = 11  # Human approval
+    Vision    = 12  # Direction, horizon
+    Growth    = 13  # Fractal expansion
+    Seal      = 14  # Sacred privacy
+    Rhythm    = 15  # Ritual cadence
+end
+
+const ALL_VESSELS = [Genesis, Void, Attention, Loop, Receipt, Mask, Residue, Execution,
+                     Swarm, Restraint, Migration, Consent, Vision, Growth, Seal, Rhythm]
+
+"""Extract ActionVessel from an Odù byte (top nibble)."""
+function vessel_from_odu(odu_byte::UInt8)::ActionVessel
+    ActionVessel(odu_byte >> 4)
+end
+
+"""
+    governing_function(vessel) → SevenFunction
+
+The SevenFunction that primarily governs a given ActionVessel.
+Mirrors If-Script's seven_bridge::governing_function().
+
+  Spark      → Genesis, Mask
+  Mind       → Attention, Restraint, Vision
+  Foundation → Loop, Execution
+  Emotion    → Consent
+  Womb       → Residue, Swarm, Growth
+  Fire       → Receipt, Seal
+  Ascension  → Void, Migration, Rhythm
+"""
+function governing_function(vessel::ActionVessel)::SevenFunction
+    vessel == Genesis   ? Spark      :
+    vessel == Void      ? Ascension  :
+    vessel == Attention ? Mind       :
+    vessel == Loop      ? Foundation :
+    vessel == Receipt   ? Fire       :
+    vessel == Mask      ? Spark      :
+    vessel == Residue   ? Womb       :
+    vessel == Execution ? Foundation :
+    vessel == Swarm     ? Womb       :
+    vessel == Restraint ? Mind       :
+    vessel == Migration ? Ascension  :
+    vessel == Consent   ? Emotion    :
+    vessel == Vision    ? Mind       :
+    vessel == Growth    ? Womb       :
+    vessel == Seal      ? Fire       :
+    Ascension  # Rhythm
+end
+
+"""All ActionVessels governed by a given SevenFunction, in priority order."""
+function vessels_for_function(f::SevenFunction)::Vector{ActionVessel}
+    f == Spark      ? [Genesis, Mask]                       :
+    f == Mind       ? [Attention, Restraint, Vision]        :
+    f == Foundation ? [Loop, Execution]                     :
+    f == Emotion    ? [Consent]                             :
+    f == Womb       ? [Residue, Swarm, Growth]              :
+    f == Fire       ? [Receipt, Seal]                       :
+    [Void, Migration, Rhythm]  # Ascension
+end
+
+"""Primary (first-priority) ActionVessel for a given SevenFunction."""
+primary_vessel(f::SevenFunction)::ActionVessel = vessels_for_function(f)[1]
+
+"""Infer governing SevenFunction from a raw Odù byte."""
+function_for_odu(odu_byte::UInt8)::SevenFunction = governing_function(vessel_from_odu(odu_byte))
+
+# ─── TwinStateVector ──────────────────────────────────────────────────────────
+
+"""
+    TwinStateVector
+
+Semantic state vector for a 1:1 digital twin.
+
+Carries four Odù addresses — one per state dimension:
+  identity_odu   — derived from the Twin's unique Odù seed (BIPỌ̀N39 lineage)
+  memory_odu     — SHA-256(GlyphIndex root) mod 256
+  field_odu      — FieldDiviner result at the current BTC height
+  simulation_odu — OSOVM world-model Odù for this twin's latest simulation
+
+Together: (WHO the twin is) + (WHAT it remembers) + (WHERE it stands) + (HOW it behaves)
+"""
+struct TwinStateVector
+    identity_odu::UInt8
+    memory_odu::UInt8
+    field_odu::UInt8
+    simulation_odu::UInt8
+end
+
+identity_function(v::TwinStateVector)   = function_for_odu(v.identity_odu)
+memory_function(v::TwinStateVector)     = function_for_odu(v.memory_odu)
+field_function(v::TwinStateVector)      = function_for_odu(v.field_odu)
+simulation_function(v::TwinStateVector) = function_for_odu(v.simulation_odu)
+
+"""Dominant SevenFunction: most frequent across four dimensions.
+Ties broken by priority: identity > field > simulation > memory."""
+function dominant_function(v::TwinStateVector)::SevenFunction
+    priority = [identity_function(v), field_function(v),
+                simulation_function(v), memory_function(v)]
+    counts = Dict{SevenFunction, Int}()
+    for f in priority
+        counts[f] = get(counts, f, 0) + 1
+    end
+    max_count = maximum(values(counts))
+    for f in priority
+        counts[f] == max_count && return f
+    end
+    priority[1]
+end
+
+"""XOR fold of all four bytes — compact fingerprint for receipt hashing."""
+composed_signature(v::TwinStateVector)::UInt8 =
+    v.identity_odu ⊻ v.memory_odu ⊻ v.field_odu ⊻ v.simulation_odu
+
+as_array(v::TwinStateVector) = [v.identity_odu, v.memory_odu, v.field_odu, v.simulation_odu]
 
 end # module Seven
