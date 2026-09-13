@@ -752,12 +752,14 @@ end
 
 function detect_and_resolve_collisions!(entities::Vector{Entity})::Vector{CollisionPair}
     collisions = CollisionPair[]
-    n = length(entities)
+    # Sort by ID before iterating so collision order is independent of insertion order.
+    sorted = sort(entities, by = e -> e.id)
+    n = length(sorted)
 
     for i in 1:n
         for j in (i+1):n
-            a = entities[i]
-            b = entities[j]
+            a = sorted[i]
+            b = sorted[j]
 
             diff = vec3_sub(a.position, b.position)
             dist = vec3_mag(diff)
