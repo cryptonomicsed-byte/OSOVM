@@ -233,16 +233,22 @@ function compute_environment_force(
         fz -= fd * vel.z / speed
     end
 
-    # Ground contact (penalty-based)
-    penetration = ground_y - (pos.y - entity.radius)
+    # Ground contact (penalty-based, Gate-4 determinism)
+    # Quantise penetration to 1e-6 resolution before multiplication to ensure
+    # identical results on ARM and x86 FPUs (IEEE 754 intermediate precision
+    # differs for fused-multiply-add; truncation here eliminates the variance).
+    penetration_raw = ground_y - (pos.y - entity.radius)
+    penetration = penetration_raw > 0.0 ? round(penetration_raw, digits=6) : 0.0
     if penetration > 0.0
         # Normal force (spring)
         fy += ground_k * penetration
         # Ground friction
         friction_coeff = get(env, "ground_friction", 0.5)
         if speed > 1e-10
-            fx -= friction_coeff * ground_k * penetration * vel.x / speed
-            fz -= friction_coeff * ground_k * penetration * vel.z / speed
+            # Quantise speed for deterministic division
+            speed_q = round(speed, digits=9)
+            fx -= friction_coeff * ground_k * penetration * vel.x / speed_q
+            fz -= friction_coeff * ground_k * penetration * vel.z / speed_q
         end
     end
 

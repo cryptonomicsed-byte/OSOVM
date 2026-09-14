@@ -41,9 +41,17 @@ const CORE_OPCODES = Dict{Symbol, UInt8}(
     :COINBASE       => 0x3a,  # @coinbase - Miner address
     :DIFFICULTY     => 0x3b,  # @difficulty - PoW metric
     # Agent Economy Opcodes (Àṣẹ → ToC bridge)
-    :AGENT_CONVERT  => 0x3c,  # @agentConvert - Burn Àṣẹ → Dopamine signal for Swibe
-    :JOB_PAYMENT    => 0x3d,  # @jobPayment - 10% creator, 5% burn, 85% agent conversion
-    :AGENT_BIRTH    => 0x3e,  # @agentBirth - Lock 10 Àṣẹ, emit 86B Dopamine + 86M Synapse
+    :AGENT_CONVERT     => 0x3c,  # @agentConvert - Burn Àṣẹ → Dopamine signal for Swibe
+    :JOB_PAYMENT       => 0x3d,  # @jobPayment - 10% creator, 5% burn, 85% agent conversion
+    :AGENT_BIRTH       => 0x3e,  # @agentBirth - Lock 10 Àṣẹ, emit 86B Dopamine + 86M Synapse
+    # ToC (Token-of-Compute) opcodes — GPU contribution chain
+    # 0x3f: free (between Agent Economy 0x3e and Quadrinity Government 0x40-0x53)
+    # 0x54-0x55: free (between Quadrinity end 0x53 and Church start 0x60)
+    :GPU_CONTRIBUTION  => 0x3f,  # @gpuContribution - Record verified GPU seconds → ToC mint eligibility
+    :TOC_MINT          => 0x54,  # @tocMint - Mint Synapse tokens from accumulated GPU contribution
+    :TOC_DECAY         => 0x55,  # @tocDecay - Apply 1%/day decay to Synapse balance
+    :COMPUTE_PROOF     => 0x56,  # @computeProof - VerifiedGPUWork → ProofEngine scoring → Dopamine authorization
+    :VEIL_GRANT        => 0x57,  # @veilGrant - Assign VeilSim capability via DIP/VCP protocol
 )
 
 # Expansion Attributes (130) — DSL Extensions, semantic only

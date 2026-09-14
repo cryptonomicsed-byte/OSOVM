@@ -9,13 +9,17 @@ include("oso_compiler.jl")
 include("glyphindex.jl")
 include("seven.jl")
 include("world_tiles.jl")
+include("proof/proof_engine.jl")
 
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
 using .Seven
 using .WorldTiles
+using .ProofEngine
 using SHA
+using JSON
+using HTTP: HTTP
 
 export execute_ir, VMState, create_vm
 
@@ -228,6 +232,11 @@ mutable struct VMState
     # execute_instruction). One vault per VM instance; the VM only ever
     # handles ciphertext (sealed GIX1 blobs) -- it never holds keys.
     glyph_vault::GlyphIndex.GlyphVault
+    # ToC (Token-of-Compute) state: accumulated GPU seconds per agent
+    # (from GPU_CONTRIBUTION 0x3f) and minted Synapse balances (from TOC_MINT 0x54).
+    toc_contributions::Dict{String, Float64}   # agent_id → accumulated gpu_seconds
+    synapse_balance::Dict{String, Int}         # agent_id → minted Synapse tokens
+    novelty_ledger::ProofEngine.NoveltyLedger  # per-environment novelty deduplication for COMPUTE_PROOF
 end
 
 function create_vm(;
@@ -386,7 +395,10 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # migrations
         Dict{String, Dict{Symbol, Any}}(),   # rollbacks
         Dict{String, Dict{Symbol, Any}}(),   # op_checkpoints
-        GlyphIndex.GlyphVault(final_signer, glyph_journal_path)
+        GlyphIndex.GlyphVault(final_signer, glyph_journal_path),
+        Dict{String, Float64}(),             # toc_contributions
+        Dict{String, Int}(),                 # synapse_balance
+        ProofEngine.NoveltyLedger(),         # novelty_ledger
     )
 end
 
@@ -566,7 +578,46 @@ function is_critical(opcode::UInt8)::Bool
         # 5 GLYPH_* opcodes (glyphindex.jl) into dispatch for the first
         # time -- previously defined but unreachable dead code.
         0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
+        # ToC (Token-of-Compute) opcodes: GPU_CONTRIBUTION (0x3f),
+        # TOC_MINT (0x54), TOC_DECAY (0x55) — real handlers below
+        # call is_fully_verified() gate before minting Synapse.
+        0x3f, 0x54, 0x55,
+        # COMPUTE_PROOF (0x56): VerifiedGPUWork → ProofEngine → Dopamine auth
+        0x56,
     ]
+end
+
+"""
+    is_fully_verified(vm, agent_id, claimed_gpu_seconds) -> Bool
+
+Gate function for TOC_MINT (0x54). Returns true only when:
+  1. claimed_gpu_seconds > 0
+  2. The agent has a recorded GPU_CONTRIBUTION (0x3f) on file in vm.toc_contributions
+  3. The cumulative contribution is >= the claimed amount
+  4. A GpuContribution event exists in vm.events for this agent (zangbeto_anchor proof)
+
+Fail-closed: any missing data returns false.
+"""
+function is_fully_verified(vm::VMState, agent_id::AbstractString, claimed_gpu_seconds::Float64)::Bool
+    if claimed_gpu_seconds <= 0.0
+        return false
+    end
+
+    # Check vm.toc_contributions for a recorded on-chain GPU contribution
+    cumulative = get(vm.toc_contributions, agent_id, 0.0)
+    if cumulative < claimed_gpu_seconds
+        return false
+    end
+
+    # Verify at least one GpuContribution event exists with a zangbeto_anchor
+    has_anchored_contribution = any(vm.events) do ev
+        get(ev, :name, "") == "GpuContribution" &&
+        string(get(get(ev, :data, Dict()), "agent_id", "")) == agent_id &&
+        !isnothing(get(get(ev, :data, Dict()), "zangbeto_anchor", nothing)) &&
+        get(get(ev, :data, Dict()), "zangbeto_anchor", "") != ""
+    end
+
+    return has_anchored_contribution
 end
 
 function call_ase_vault(instr::OsoCompiler.Instruction)::Any
@@ -2118,6 +2169,228 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         vm.ase_balance[vm.current_sender] = balance - birth_fee
         push!(vm.events, Dict(:name => "AgentBirth", :data => Dict("sender" => vm.current_sender, "agent_id" => agent_id), :block => vm.block_height))
         return Dict("success" => true, "agent_id" => agent_id, "ase_locked" => birth_fee, "dopamine_endowment" => 86_000_000_000.0, "synapse_endowment" => 86_000_000.0)
+
+    # ToC (Token-of-Compute) opcodes ─────────────────────────────────────────
+    elseif opcode == 0x3f  # GPU_CONTRIBUTION — record verified GPU work → ToC eligibility
+        provider_id     = string(get(args, :provider_id, ""))
+        agent_id        = string(get(args, :agent_id, ""))
+        job_id          = string(get(args, :job_id, ""))
+        gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
+        zangbeto_anchor = get(args, :zangbeto_anchor, nothing)
+
+        if gpu_seconds <= 0.0
+            return Dict("success" => false, "error" => "gpu_seconds must be positive")
+        end
+        if isnothing(zangbeto_anchor) || zangbeto_anchor == ""
+            return Dict("success" => false, "error" => "zangbeto_anchor required for GPU_CONTRIBUTION")
+        end
+
+        # Store contribution in VM state (vm.toc_contributions: agent_id → gpu_seconds)
+        prev = get(vm.toc_contributions, agent_id, 0.0)
+        vm.toc_contributions[agent_id] = prev + gpu_seconds
+
+        push!(vm.events, Dict(
+            :name => "GpuContribution",
+            :data => Dict(
+                "provider_id"     => provider_id,
+                "agent_id"        => agent_id,
+                "job_id"          => job_id,
+                "gpu_seconds"     => gpu_seconds,
+                "zangbeto_anchor" => zangbeto_anchor,
+                "cumulative"      => vm.toc_contributions[agent_id],
+            ),
+            :block => vm.block_height,
+        ))
+        return Dict(
+            "success"    => true,
+            "agent_id"   => agent_id,
+            "gpu_seconds" => gpu_seconds,
+            "cumulative" => vm.toc_contributions[agent_id],
+        )
+
+    elseif opcode == 0x54  # TOC_MINT — mint Synapse tokens from accumulated GPU contribution
+        agent_id           = string(get(args, :agent_id, ""))
+        gpu_seconds        = Float64(get(args, :gpu_seconds, 0.0))
+        synapse_estimate   = Int(get(args, :synapse_estimate, 0))
+
+        # Gate: is_fully_verified must pass before minting
+        if !is_fully_verified(vm, agent_id, gpu_seconds)
+            return Dict(
+                "success" => false,
+                "error"   => "not_fully_verified",
+                "reason"  => "GPU contribution failed verification gate: " *
+                             "requires gpu_seconds > 0, zangbeto_anchor on file, and " *
+                             "cumulative contribution matches claim",
+            )
+        end
+
+        # Mint floor: < 3.6 GPU-seconds → defer
+        gpu_hours = gpu_seconds / 3600.0
+        if gpu_hours < 0.001
+            return Dict(
+                "success" => false,
+                "error"   => "below_mint_floor",
+                "gpu_hours" => gpu_hours,
+                "floor"     => 0.001,
+            )
+        end
+
+        minted_synapse = synapse_estimate > 0 ? synapse_estimate : floor(Int, gpu_hours * 1000)
+
+        # Credit to vm.synapse_balance
+        prev_synapse = get(vm.synapse_balance, agent_id, 0)
+        vm.synapse_balance[agent_id] = prev_synapse + minted_synapse
+
+        # Drain from toc_contributions
+        vm.toc_contributions[agent_id] = max(0.0, get(vm.toc_contributions, agent_id, 0.0) - gpu_seconds)
+
+        push!(vm.events, Dict(
+            :name => "TocMint",
+            :data => Dict(
+                "agent_id"       => agent_id,
+                "gpu_seconds"    => gpu_seconds,
+                "minted_synapse" => minted_synapse,
+                "new_balance"    => vm.synapse_balance[agent_id],
+            ),
+            :block => vm.block_height,
+        ))
+        return Dict(
+            "success"        => true,
+            "agent_id"       => agent_id,
+            "minted_synapse" => minted_synapse,
+            "new_balance"    => vm.synapse_balance[agent_id],
+        )
+
+    elseif opcode == 0x55  # TOC_DECAY — apply 1%/day Synapse balance decay
+        agent_id = string(get(args, :agent_id, ""))
+
+        prev_bal = get(vm.synapse_balance, agent_id, 0)
+        if prev_bal == 0
+            return Dict("success" => true, "agent_id" => agent_id, "decayed" => 0, "new_balance" => 0)
+        end
+
+        new_bal = floor(Int, prev_bal * 0.99)
+        vm.synapse_balance[agent_id] = new_bal
+        decayed = prev_bal - new_bal
+
+        push!(vm.events, Dict(
+            :name => "TocDecay",
+            :data => Dict("agent_id" => agent_id, "decayed" => decayed, "new_balance" => new_bal),
+            :block => vm.block_height,
+        ))
+        return Dict(
+            "success"     => true,
+            "agent_id"    => agent_id,
+            "prev_balance" => prev_bal,
+            "decayed"     => decayed,
+            "new_balance" => new_bal,
+        )
+
+    elseif opcode == 0x56  # COMPUTE_PROOF — VerifiedGPUWork → ProofEngine → Dopamine auth
+        # Inputs (from UCX receipt / OSOVM caller):
+        #   agent_id       String  — Omo-Koda2 agent that ran the compute job
+        #   job_id         String  — UCX job UUID
+        #   provider_id    String  — UCX provider that executed the job
+        #   gpu_seconds    Float64 — actual GPU-seconds billed by the provider
+        #   f1_score       Float64 — sim-vs-reality quality score (0-1); 0 if N/A
+        #   receipt_hash   String  — SHA-256 hex of the UCX ComputeReceipt
+        #   environment_hash String — hash of the compute environment (for novelty)
+        #
+        # Output: Dict with proof_value, mint_eligible, dopamine_authorized
+        agent_id        = string(get(args, :agent_id, ""))
+        job_id          = string(get(args, :job_id, ""))
+        provider_id     = string(get(args, :provider_id, ""))
+        gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
+        f1_score        = Float64(get(args, :f1_score, 0.0))
+        receipt_hash    = string(get(args, :receipt_hash, ""))
+        env_hash        = string(get(args, :environment_hash, job_id))
+
+        if isempty(agent_id) || isempty(job_id) || gpu_seconds <= 0.0
+            return Dict("success" => false, "error" => "agent_id, job_id, and gpu_seconds > 0 required")
+        end
+        if isempty(receipt_hash)
+            return Dict("success" => false, "error" => "receipt_hash required for COMPUTE_PROOF")
+        end
+
+        # Compute difficulty from gpu_seconds (log-normalised, caps at 1.0 for ≥3600s)
+        difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
+
+        # Quality from f1_score; if no sim run, default to 0.5 (neutral)
+        quality = f1_score > 0.0 ? clamp(f1_score, 0.0, 1.0) : 0.5
+
+        # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
+        novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)
+
+        # Verification: 1.0 if agent has a matching GPU_CONTRIBUTION on this job
+        cumulative = get(vm.toc_contributions, agent_id, 0.0)
+        verification = cumulative >= gpu_seconds ? 1.0 : 0.5
+
+        # Independence (always 1.0 for single-provider UCX jobs; multi-provider = higher)
+        independence = 1.0
+
+        # Utility: scale with gpu_seconds (capped at 8h for max utility)
+        utility = clamp(gpu_seconds / (8.0 * 3600.0), 0.0, 1.0)
+
+        eval = ProofEngine.compute_evaluation(
+            job_id, ProofEngine.Simulation,
+            difficulty, quality, novelty, verification, independence, utility,
+        )
+
+        # Dopamine authorization: mint_eligible gates the Dopamine credit in Vantage.
+        # Dopamine = gpu_hours * proof_value * 1000 (base rate, matches resource_meter.jl)
+        gpu_hours = gpu_seconds / 3600.0
+        dopamine_authorized = eval.mint_eligible ? floor(Int, gpu_hours * eval.proof_value * 1000) : 0
+
+        push!(vm.events, Dict(
+            :name => "ComputeProof",
+            :data => Dict(
+                "agent_id"           => agent_id,
+                "job_id"             => job_id,
+                "provider_id"        => provider_id,
+                "gpu_seconds"        => gpu_seconds,
+                "receipt_hash"       => receipt_hash,
+                "proof_value"        => eval.proof_value,
+                "mint_eligible"      => eval.mint_eligible,
+                "dopamine_authorized" => dopamine_authorized,
+            ),
+            :block => vm.block_height,
+        ))
+
+        # Fail-open: attempt to notify Vantage dopamine mint endpoint.
+        # Never blocks — VM execution continues regardless.
+        if eval.mint_eligible && dopamine_authorized > 0
+            vantage_base = get(ENV, "VANTAGE_URL", "")
+            if !isempty(vantage_base)
+                try
+                    payload = JSON.json(Dict(
+                        "agent_id"    => agent_id,
+                        "job_id"      => job_id,
+                        "gpu_seconds" => gpu_seconds,
+                        "proof_value" => eval.proof_value,
+                        "dopamine"    => dopamine_authorized,
+                        "receipt_hash" => receipt_hash,
+                    ))
+                    HTTP.post("$(vantage_base)/api/ucx/dopamine/mint",
+                        ["Content-Type" => "application/json"],
+                        payload; connect_timeout=5, readtimeout=10)
+                catch
+                    # Ignore — Vantage unreachable does not fail the opcode
+                end
+            end
+        end
+
+        return Dict(
+            "success"             => true,
+            "agent_id"            => agent_id,
+            "job_id"              => job_id,
+            "proof_value"         => eval.proof_value,
+            "mint_eligible"       => eval.mint_eligible,
+            "dopamine_authorized" => dopamine_authorized,
+            "difficulty"          => eval.difficulty,
+            "quality"             => eval.quality,
+            "novelty"             => eval.novelty,
+            "verification"        => eval.verification,
+        )
 
     # 1440 Inheritance Wallet Opcodes (Sacred Governance)
     elseif opcode == 0x30  # CANDIDATE_APPLY
