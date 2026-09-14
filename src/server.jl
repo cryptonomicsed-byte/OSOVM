@@ -324,3 +324,7 @@ function start(; port::Int = parse(Int, get(ENV, "OSOVM_PORT", "7780")))
 end
 
 end # module OsoVMServer
+
+# ─── Entrypoint ──────────────────────────────────────────────────────────────
+port = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : parse(Int, get(ENV, "OSOVM_PORT", "7780"))
+OsoVMServer.start(port=port)
