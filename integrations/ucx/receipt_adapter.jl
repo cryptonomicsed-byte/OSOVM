@@ -12,7 +12,7 @@ module UcxReceiptAdapter
 
 using JSON3, Dates
 
-export ucx_to_zangbeto, ZangbetoReceipt
+export ucx_to_zangbeto, ZangbetoReceipt, check_mint_allowlist
 
 struct ZangbetoReceipt
     job_id         :: String
@@ -47,6 +47,39 @@ function ucx_to_zangbeto(raw::AbstractString)::ZangbetoReceipt
         string(r.billing.currency),
         now(UTC),
     )
+end
+
+"""
+    check_mint_allowlist(ucx_receipt::Dict) -> Bool
+
+Validate that a UCX receipt is eligible to trigger a Dopamine/Synapse mint.
+Returns true only when ALL of the following hold:
+
+  1. provider_id is present and non-empty
+  2. agent_id is present and non-empty
+  3. workload_hash is present (proof of actual work, not idle billing)
+  4. completed_at timestamp is within the last 1 hour (prevents replayed receipts)
+
+Fail-closed: any missing or expired field returns false.
+"""
+function check_mint_allowlist(ucx_receipt::Dict)::Bool
+    provider_id  = string(get(ucx_receipt, "provider_id",
+                              get(ucx_receipt, :provider_id, "")))
+    agent_id     = string(get(ucx_receipt, "agent_id",
+                              get(ucx_receipt, :agent_id, "")))
+    workload_hash = string(get(ucx_receipt, "workload_hash",
+                               get(ucx_receipt, :workload_hash, "")))
+
+    isempty(provider_id)   && return false
+    isempty(agent_id)      && return false
+    isempty(workload_hash) && return false
+
+    completed_at = get(ucx_receipt, "completed_at",
+                       get(ucx_receipt, :completed_at, 0))
+    now_ts = round(Int, datetime2unix(now(UTC)))
+    (now_ts - Int(completed_at)) > 3600 && return false
+
+    return true
 end
 
 end # module

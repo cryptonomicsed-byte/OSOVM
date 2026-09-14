@@ -15,7 +15,8 @@ using .AseSupply
 
 export VMState, Block, Transaction, Receipt,
        apply_block, initial_state, copy_state,
-       OPCODE_HANDLERS
+       OPCODE_HANDLERS,
+       toc_is_fully_verified
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # NUMERIC DISCIPLINE
@@ -70,15 +71,18 @@ function initial_state(;
         0,
         Receipt[],
         Dict{Symbol,Any}(
-            :staked            => Dict{String,Float64}(),
-            :tithe_collected   => 0.0,
-            :halted            => false,
-            :events            => Vector{Dict{Symbol,Any}}(),
-            :chain_id          => chain_id,
-            :council           => copy(council),
-            :final_signer      => final_signer,
-            :genesis_flaw_used => false,
-            :ase_supply        => AseSupply.SupplyState(),
+            :staked              => Dict{String,Float64}(),
+            :tithe_collected     => 0.0,
+            :halted              => false,
+            :events              => Vector{Dict{Symbol,Any}}(),
+            :chain_id            => chain_id,
+            :council             => copy(council),
+            :final_signer        => final_signer,
+            :genesis_flaw_used   => false,
+            :ase_supply          => AseSupply.SupplyState(),
+            # ToC (Token-of-Compute) state
+            :toc_contributions   => Dict{String,Float64}(),  # agent_id → accumulated gpu_seconds
+            :synapse_balance     => Dict{String,Int}(),      # agent_id → minted Synapse tokens
         )
     )
 end
@@ -448,24 +452,223 @@ function op_job_payment(state::VMState, args::Dict{Symbol,Any})
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TOC (TOKEN-OF-COMPUTE) HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    toc_is_fully_verified(state, agent_id, claimed_gpu_seconds) -> Bool
+
+Gate for TOC_MINT (0x54). Returns true only when:
+  1. claimed_gpu_seconds > 0
+  2. A GPU_CONTRIBUTION (0x3f) receipt is on file for this agent
+  3. The cumulative contribution is >= the claimed amount
+  4. A GpuContribution event with a zangbeto_anchor exists
+
+Fail-closed: any missing data returns false.
+"""
+function toc_is_fully_verified(state::VMState, agent_id::String,
+                                claimed_gpu_seconds::Float64)::Bool
+    claimed_gpu_seconds > 0.0 || return false
+
+    contributions = state.metadata[:toc_contributions]::Dict{String,Float64}
+    cumulative    = get(contributions, agent_id, 0.0)
+    cumulative >= claimed_gpu_seconds || return false
+
+    events = state.metadata[:events]::Vector{Dict{Symbol,Any}}
+    any(events) do ev
+        get(ev, :name, "") == "GpuContribution" &&
+        string(get(get(ev, :data, Dict()), "agent_id", "")) == agent_id &&
+        !isnothing(get(get(ev, :data, Dict()), "zangbeto_anchor", nothing)) &&
+        get(get(ev, :data, Dict()), "zangbeto_anchor", "") != ""
+    end
+end
+
+"""
+    op_gpu_contribution — GPU_CONTRIBUTION (0x3f)
+Record verified GPU seconds from a UCX receipt → ToC mint eligibility.
+Args: :agent_id, :provider_id, :gpu_seconds, :job_id, :zangbeto_anchor
+"""
+function op_gpu_contribution(state::VMState, args::Dict{Symbol,Any})
+    agent_id        = String(get(args, :agent_id, ""))
+    provider_id     = String(get(args, :provider_id, ""))
+    gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
+    job_id          = String(get(args, :job_id, ""))
+    zangbeto_anchor = get(args, :zangbeto_anchor, nothing)
+    block_number    = Int(get(args, :block_number, 0))
+
+    if isempty(agent_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_agent_id")
+    end
+    if gpu_seconds <= 0.0
+        return state, Dict{Symbol,Any}(:success => false, :error => "gpu_seconds must be positive")
+    end
+    if isnothing(zangbeto_anchor) || zangbeto_anchor == ""
+        return state, Dict{Symbol,Any}(:success => false, :error => "zangbeto_anchor required")
+    end
+
+    s = copy_state(state)
+    contributions = s.metadata[:toc_contributions]::Dict{String,Float64}
+    prev = get(contributions, agent_id, 0.0)
+    contributions[agent_id] = r6(prev + gpu_seconds)
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "GpuContribution",
+        :data  => Dict{String,Any}(
+            "provider_id"     => provider_id,
+            "agent_id"        => agent_id,
+            "job_id"          => job_id,
+            "gpu_seconds"     => gpu_seconds,
+            "zangbeto_anchor" => zangbeto_anchor,
+            "cumulative"      => contributions[agent_id],
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success    => true,
+        :agent_id   => agent_id,
+        :gpu_seconds => gpu_seconds,
+        :cumulative => contributions[agent_id],
+        :opcode     => "GPU_CONTRIBUTION",
+    )
+end
+
+"""
+    op_toc_mint — TOC_MINT (0x54)
+Mint Synapse tokens from accumulated GPU contribution.
+Gate: toc_is_fully_verified() must pass first.
+Args: :agent_id, :gpu_seconds, :synapse_estimate (optional)
+"""
+function op_toc_mint(state::VMState, args::Dict{Symbol,Any})
+    agent_id         = String(get(args, :agent_id, ""))
+    gpu_seconds      = Float64(get(args, :gpu_seconds, 0.0))
+    synapse_estimate = Int(get(args, :synapse_estimate, 0))
+    block_number     = Int(get(args, :block_number, 0))
+
+    # Gate: is_fully_verified must pass before minting
+    if !toc_is_fully_verified(state, agent_id, gpu_seconds)
+        return state, Dict{Symbol,Any}(
+            :success => false,
+            :error   => "is_fully_verified() gate failed — requires gpu_seconds > 0, " *
+                        "zangbeto_anchor on file, and cumulative contribution matches claim",
+            :agent_id => agent_id,
+        )
+    end
+
+    # Mint floor: < 3.6 GPU-seconds → defer
+    gpu_hours = gpu_seconds / 3600.0
+    if gpu_hours < 0.001
+        return state, Dict{Symbol,Any}(
+            :success   => false,
+            :error     => "below_mint_floor",
+            :gpu_hours => gpu_hours,
+            :floor     => 0.001,
+        )
+    end
+
+    minted_synapse = synapse_estimate > 0 ? synapse_estimate : floor(Int, gpu_hours * 1000)
+
+    s = copy_state(state)
+    contributions  = s.metadata[:toc_contributions]::Dict{String,Float64}
+    syn_balances   = s.metadata[:synapse_balance]::Dict{String,Int}
+
+    prev_synapse = get(syn_balances, agent_id, 0)
+    syn_balances[agent_id]   = prev_synapse + minted_synapse
+    contributions[agent_id] = max(0.0, get(contributions, agent_id, 0.0) - gpu_seconds)
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "TocMint",
+        :data  => Dict{String,Any}(
+            "agent_id"       => agent_id,
+            "gpu_seconds"    => gpu_seconds,
+            "minted_synapse" => minted_synapse,
+            "new_balance"    => syn_balances[agent_id],
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success        => true,
+        :agent_id       => agent_id,
+        :minted_synapse => minted_synapse,
+        :new_balance    => syn_balances[agent_id],
+        :opcode         => "TOC_MINT",
+    )
+end
+
+"""
+    op_toc_decay — TOC_DECAY (0x55)
+Apply 1%/day decay to a single agent's Synapse balance.
+Args: :agent_id
+"""
+function op_toc_decay(state::VMState, args::Dict{Symbol,Any})
+    agent_id     = String(get(args, :agent_id, ""))
+    block_number = Int(get(args, :block_number, 0))
+
+    syn_balances = state.metadata[:synapse_balance]::Dict{String,Int}
+    prev_bal = get(syn_balances, agent_id, 0)
+    if prev_bal == 0
+        return state, Dict{Symbol,Any}(
+            :success     => true,
+            :agent_id    => agent_id,
+            :decayed     => 0,
+            :new_balance => 0,
+        )
+    end
+
+    new_bal = floor(Int, prev_bal * 0.99)
+    decayed = prev_bal - new_bal
+
+    s = copy_state(state)
+    s_syn = s.metadata[:synapse_balance]::Dict{String,Int}
+    s_syn[agent_id] = new_bal
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "TocDecay",
+        :data  => Dict{String,Any}(
+            "agent_id"    => agent_id,
+            "decayed"     => decayed,
+            "new_balance" => new_bal,
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success      => true,
+        :agent_id     => agent_id,
+        :prev_balance => prev_bal,
+        :decayed      => decayed,
+        :new_balance  => new_bal,
+        :opcode       => "TOC_DECAY",
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OPCODE REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 
 const OPCODE_HANDLERS = Dict{UInt8, Function}(
-    0x00 => op_halt,            # HALT
-    0x01 => op_noop,            # NOOP
-    0x11 => op_impact,          # IMPACT
-    0x22 => op_transfer,        # TRANSFER
-    0x20 => op_stake,           # STAKE
-    0x21 => op_unstake,         # UNSTAKE
-    0x23 => op_balance,         # BALANCE
-    0x27 => op_tithe,           # TITHE
-    0x1f => op_receipt,         # RECEIPT
-    0x28 => op_nonreentrant,    # NONREENTRANT
-    0x2b => op_genesis_flaw,    # GENESIS_FLAW_TOKEN
-    0x3c => op_agent_convert,   # AGENT_CONVERT (Àṣẹ → Dopamine signal)
-    0x3d => op_job_payment,     # JOB_PAYMENT (10% creator, 5% burn, 85% agent)
-    0x3e => op_agent_birth,     # AGENT_BIRTH (lock 10 Àṣẹ, emit 86B/86M endowment)
+    0x00 => op_halt,              # HALT
+    0x01 => op_noop,              # NOOP
+    0x11 => op_impact,            # IMPACT
+    0x22 => op_transfer,          # TRANSFER
+    0x20 => op_stake,             # STAKE
+    0x21 => op_unstake,           # UNSTAKE
+    0x23 => op_balance,           # BALANCE
+    0x27 => op_tithe,             # TITHE
+    0x1f => op_receipt,           # RECEIPT
+    0x28 => op_nonreentrant,      # NONREENTRANT
+    0x2b => op_genesis_flaw,      # GENESIS_FLAW_TOKEN
+    0x3c => op_agent_convert,     # AGENT_CONVERT (Àṣẹ → Dopamine signal)
+    0x3d => op_job_payment,       # JOB_PAYMENT (10% creator, 5% burn, 85% agent)
+    0x3e => op_agent_birth,       # AGENT_BIRTH (lock 10 Àṣẹ, emit 86B/86M endowment)
+    # ToC (Token-of-Compute) opcodes — GPU contribution chain
+    0x3f => op_gpu_contribution,  # GPU_CONTRIBUTION (record verified GPU seconds)
+    0x54 => op_toc_mint,          # TOC_MINT (mint Synapse from GPU contribution)
+    0x55 => op_toc_decay,         # TOC_DECAY (apply 1%/day Synapse decay)
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
