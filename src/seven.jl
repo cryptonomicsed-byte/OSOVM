@@ -223,7 +223,7 @@ composite(p::SevenProfile)::Float64 = sum(p.values) / 7.0
 
 function display_profile(p::SevenProfile, adapter::CulturalAdapter)::Vector{NamedTuple}
     [
-        (function=f, canonical_name=canonical_name(adapter, f),
+        (fn=f, canonical_name=canonical_name(adapter, f),
          ascii_slug=ascii_slug(adapter, f), strength=strength(p, f))
         for f in ALL_SEVEN
     ]
@@ -353,7 +353,7 @@ end # module SevenCalendar
 
 @enum ActionVessel begin
     Genesis   = 0   # Initialize, covenant
-    Void      = 1   # Clear, release
+    VoidVessel      = 1   # Clear, release
     Attention = 2   # Focus, signal/noise
     Loop      = 3   # Pattern, iteration
     Receipt   = 4   # Record, accountability
@@ -370,7 +370,7 @@ end # module SevenCalendar
     Rhythm    = 15  # Ritual cadence
 end
 
-const ALL_VESSELS = [Genesis, Void, Attention, Loop, Receipt, Mask, Residue, Execution,
+const ALL_VESSELS = [Genesis, VoidVessel, Attention, Loop, Receipt, Mask, Residue, Execution,
                      Swarm, Restraint, Migration, Consent, Vision, Growth, Seal, Rhythm]
 
 """Extract ActionVessel from an Odù byte (top nibble)."""
@@ -390,11 +390,11 @@ Mirrors If-Script's seven_bridge::governing_function().
   Emotion    → Consent
   Womb       → Residue, Swarm, Growth
   Fire       → Receipt, Seal
-  Ascension  → Void, Migration, Rhythm
+  Ascension  → VoidVessel, Migration, Rhythm
 """
 function governing_function(vessel::ActionVessel)::SevenFunction
     vessel == Genesis   ? Spark      :
-    vessel == Void      ? Ascension  :
+    vessel == VoidVessel      ? Ascension  :
     vessel == Attention ? Mind       :
     vessel == Loop      ? Foundation :
     vessel == Receipt   ? Fire       :
@@ -419,7 +419,7 @@ function vessels_for_function(f::SevenFunction)::Vector{ActionVessel}
     f == Emotion    ? [Consent]                             :
     f == Womb       ? [Residue, Swarm, Growth]              :
     f == Fire       ? [Receipt, Seal]                       :
-    [Void, Migration, Rhythm]  # Ascension
+    [VoidVessel, Migration, Rhythm]  # Ascension
 end
 
 """Primary (first-priority) ActionVessel for a given SevenFunction."""
