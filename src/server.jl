@@ -8,10 +8,16 @@ module OsoVMServer
 include("opcodes.jl")
 include("oso_compiler.jl")
 include("oso_vm.jl")
+include("../integrations/ucx/execution_adapter.jl")
+include("../integrations/ucx/resource_meter.jl")
 
 using .Opcodes
 using .OsoCompiler
 using .OsoVM
+using .UcxExecutionAdapter
+using .UcxPreflight
+using .ResourceMeter
+using .UcxJobMeter
 
 using HTTP
 using JSON3
@@ -276,6 +282,117 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
+# UCX RESOURCE ACCOUNTING HANDLERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+POST /ucx/preflight
+Body: { agent_id, job_id, workload_type, params: {...} }
+
+Checks Synapse balance and soft-locks the estimated budget before a UCX job
+starts. Responds with 200+ticket on success or 402+error on insufficient funds.
+
+The `synapse_balance` is read from a fresh VM instance so it reflects the
+latest on-chain minted Synapse for the agent.
+"""
+function handle_ucx_preflight(req::HTTP.Request)::HTTP.Response
+    local body_obj
+    try
+        body_obj = JSON3.read(req.body)
+    catch e
+        return bad_request("invalid JSON body: $(e)")
+    end
+
+    agent_id      = string(get(body_obj, :agent_id, ""))
+    job_id        = string(get(body_obj, :job_id, ""))
+    workload_type = string(get(body_obj, :workload_type, "inference"))
+
+    isempty(agent_id) && return bad_request("missing field: agent_id")
+    isempty(job_id)   && return bad_request("missing field: job_id")
+
+    raw_params = get(body_obj, :params, nothing)
+    params = raw_params === nothing ? Dict{String,Any}() :
+             Dict{String,Any}(string(k) => v for (k, v) in raw_params)
+
+    # Read current Synapse balance from a fresh VM
+    vm = OsoVM.create_vm()
+    synapse_balance = get(vm.synapse_balance, agent_id, 0)
+
+    result = UcxPreflight.preflight(synapse_balance, agent_id, job_id, workload_type, params)
+
+    if result["success"]
+        # Auto-start a meter session so the caller can immediately record samples
+        session_id = UcxJobMeter.start_session(job_id, agent_id)
+        result["meter_session_id"] = session_id
+        return json_ok(result)
+    else
+        body = JSON3.write(result)
+        return HTTP.Response(402, ["Content-Type" => "application/json"], body)
+    end
+end
+
+"""
+POST /ucx/settle
+Body: { lock_id, actual_synapse, gpu_seconds }
+
+Releases the preflight soft-lock and records the actual cost.
+Also stops the meter session (if still open) and records the GPU contribution
+in ResourceMeter so it is eligible for the TOC_MINT cycle.
+"""
+function handle_ucx_settle(req::HTTP.Request)::HTTP.Response
+    local body_obj
+    try
+        body_obj = JSON3.read(req.body)
+    catch e
+        return bad_request("invalid JSON body: $(e)")
+    end
+
+    lock_id        = string(get(body_obj, :lock_id, ""))
+    actual_synapse = Int(get(body_obj, :actual_synapse, 0))
+    gpu_seconds    = Float64(get(body_obj, :gpu_seconds, 0.0))
+
+    isempty(lock_id) && return bad_request("missing field: lock_id")
+
+    result = UcxPreflight.settle(lock_id, actual_synapse, gpu_seconds)
+
+    if !result["success"]
+        body = JSON3.write(result)
+        return HTTP.Response(404, ["Content-Type" => "application/json"], body)
+    end
+
+    # Stop meter session if still open (best-effort; may have been stopped already)
+    agent_id = get(result, "agent_id", "")
+    job_id   = get(result, "job_id",   "")
+    session_id = "meter:$(job_id)"
+    meter_reading = UcxJobMeter.stop_session(session_id)
+    if !haskey(meter_reading, "error")
+        result["meter_reading"] = meter_reading
+    end
+
+    # Record contribution in ResourceMeter → makes agent eligible for TOC_MINT
+    if gpu_seconds > 0.0 && !isempty(agent_id)
+        ResourceMeter.record_contribution(agent_id, gpu_seconds, job_id)
+        result["toc_eligible"] = ResourceMeter.mint_eligible_amount(agent_id) != (0.0, 0)
+    end
+
+    return json_ok(result)
+end
+
+"""
+GET /ucx/meter/:session_id
+Returns current meter reading without stopping the session.
+"""
+function handle_ucx_meter_read(req::HTTP.Request)::HTTP.Response
+    # Extract session_id from path: /ucx/meter/<session_id>
+    parts = split(req.target, '/')
+    session_id = length(parts) >= 4 ? join(parts[4:end], '/') : ""
+    isempty(session_id) && return bad_request("missing session_id in path")
+
+    reading = UcxJobMeter.current_reading(session_id)
+    return json_ok(reading)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTER
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -295,6 +412,15 @@ function router(req::HTTP.Request)::HTTP.Response
 
         elseif target == "/veilsim/run" && method == "POST"
             return handle_veilsim_run(req)
+
+        elseif target == "/ucx/preflight" && method == "POST"
+            return handle_ucx_preflight(req)
+
+        elseif target == "/ucx/settle" && method == "POST"
+            return handle_ucx_settle(req)
+
+        elseif startswith(target, "/ucx/meter/") && method == "GET"
+            return handle_ucx_meter_read(req)
 
         else
             body = JSON3.write(Dict{String,Any}(
@@ -319,7 +445,7 @@ end
 
 function start(; port::Int = parse(Int, get(ENV, "OSOVM_PORT", "7780")))
     @info "ỌSỌVM HTTP server starting" port=port
-    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run"
+    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run  POST /ucx/preflight  POST /ucx/settle  GET /ucx/meter/:id"
     HTTP.serve(router, "0.0.0.0", port)
 end
 
