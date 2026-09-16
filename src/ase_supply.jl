@@ -6,8 +6,12 @@ module AseSupply
 
 export SupplyState, check_daily_cap, enforce_sabbath, agent_convert_ase,
        process_job_payment, process_agent_birth, get_supply_stats,
+       compute_dynamic_decay, update_epoch_decay,
        DAILY_MINT_CAP, TITHE_RATE, AGENT_BIRTH_FEE,
-       AGENT_DOPAMINE_ENDOWMENT, AGENT_SYNAPSE_ENDOWMENT, MAX_AGENTS_PER_DAY
+       DOPAMINE_GENESIS_SEED, MAX_AGENT_POOL_SHARE, SYNAPSE_PER_GPU_HOUR,
+       MAX_AGENTS_PER_DAY,
+       # deprecated aliases kept for callers not yet updated:
+       AGENT_DOPAMINE_ENDOWMENT, AGENT_SYNAPSE_ENDOWMENT
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
@@ -34,14 +38,42 @@ const SABBATH_LOCK_SECONDS = 7 * 86400
 """Fixed Àṣẹ cost per agent birth — locked, not burned"""
 const AGENT_BIRTH_FEE = 10.0
 
-"""Dopamine endowment per agent — 86 billion (one per neuron)"""
-const AGENT_DOPAMINE_ENDOWMENT = 86_000_000_000
+"""
+Dopamine genesis seed — 86 billion starting pool.
+Decision 2026-09-15: Dopamine is ONE elastic ecosystem pool, not per-agent.
+Pool grows via @gpuContribution verified work; never shrinks below genesis_seed.
+"""
+const DOPAMINE_GENESIS_SEED = 86_000_000_000
 
-"""Synapse endowment per agent — 86 million (one per synaptic bundle)"""
-const AGENT_SYNAPSE_ENDOWMENT = 86_000_000
+"""
+Max Synapse share per agent — 0.5% of total Dopamine pool.
+Decision 2026-09-15: percentage-of-pool replaces absolute endowment.
+Removes the 1,000-agent ceiling (86B ÷ 86M = 1,000 agents max) that the
+prior design implied. Agent count is now unbounded.
+"""
+const MAX_AGENT_POOL_SHARE = 0.005          # 0.5% of Dopamine pool
 
-"""Max agents that can be born per day at full capacity (1440 ÷ 10)"""
+"""Synapse minted per verified GPU-hour contributed"""
+const SYNAPSE_PER_GPU_HOUR = 1000.0
+
+"""Max agents that can be born per day (rate-limit, not a hard cap on civilization)"""
 const MAX_AGENTS_PER_DAY = 144
+
+# Dynamic decay constants (TOC_CONSTANTS.toml [dopamine])
+const DECAY_MIN             = 0.001         # 0.1%/day — idle network
+const DECAY_MAX             = 0.020         # 2.0%/day — saturated network
+const DECAY_EMA_ALPHA       = 0.25          # ~4 epochs to converge
+const DECAY_CLAMP_PER_EPOCH = 0.002         # max shift per 7-day Koodu cycle
+
+# Job payment treasury split (agent keeps Àṣẹ + burns to Dopamine)
+# Decision 2026-09-15: agent retains ASE_AGENT_TREASURY share as spendable Àṣẹ
+const ASE_AGENT_TREASURY    = 0.30          # 30% retained as Àṣẹ treasury
+const ASE_AGENT_DOPAMINE    = 0.55          # 55% burned → Dopamine (capacity)
+# Total: 10% creator + 5% burn + 30% Àṣẹ treasury + 55% Dopamine = 100%
+
+# Deprecated aliases — kept for callers built before 2026-09-15 elastic redesign
+const AGENT_DOPAMINE_ENDOWMENT = DOPAMINE_GENESIS_SEED
+const AGENT_SYNAPSE_ENDOWMENT  = 86_000_000   # kept as reference; not used in birth
 
 r6(x::Real)::Float64 = round(Float64(x), digits=6)
 
@@ -57,13 +89,20 @@ mutable struct SupplyState
     total_burned::Float64         # all-time burned (protocol burns + conversions)
     total_converted_to_agent::Float64  # Àṣẹ burned for agent Dopamine
     total_locked_for_births::Float64   # Àṣẹ locked (not burned) for agent creation
-    agents_born_today::Int        # agents created today (max 144)
+    agents_born_today::Int        # agents created today (rate limit, not hard cap)
     agents_born_total::Int        # all-time agent count
     creator_royalties_pending::Vector{Dict{Symbol,Any}}  # locked payouts
+    # Elastic Dopamine pool (grows with verified compute contributions)
+    total_dopamine_pool::Float64  # current pool size (starts at DOPAMINE_GENESIS_SEED)
+    # Dynamic decay state (updated each Koodu epoch on Sabbath)
+    current_decay_rate::Float64   # current daily decay rate
+    decay_u_smooth::Float64       # smoothed utilization (EMA)
+    last_epoch_timestamp::Int     # when decay was last updated
 end
 
 function SupplyState()
-    SupplyState(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, Dict{Symbol,Any}[])
+    SupplyState(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, Dict{Symbol,Any}[],
+                Float64(DOPAMINE_GENESIS_SEED), 0.01, 0.5, 0)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -174,13 +213,19 @@ function process_agent_birth(supply::SupplyState, creator_address::String,
     supply.agents_born_today += 1
     supply.agents_born_total += 1
 
+    # Compute this agent's Synapse allocation as a share of the current pool.
+    # pool_size grows with verified compute; allocation scales automatically.
+    current_pool = max(DOPAMINE_GENESIS_SEED, supply.total_dopamine_pool)
+    synapse_alloc = r6(current_pool * MAX_AGENT_POOL_SHARE)
+
     return Dict{Symbol,Any}(
         :success => true,
         :agent_id => agent_id,
         :creator => creator_address,
         :ase_locked => AGENT_BIRTH_FEE,
-        :dopamine_endowment => AGENT_DOPAMINE_ENDOWMENT,
-        :synapse_endowment => AGENT_SYNAPSE_ENDOWMENT,
+        :synapse_alloc => synapse_alloc,        # share of current pool
+        :pool_share_pct => MAX_AGENT_POOL_SHARE,
+        :current_pool_size => current_pool,
         :agents_born_today => supply.agents_born_today,
         :agents_born_total => supply.agents_born_total,
         :timestamp => timestamp,
@@ -227,10 +272,16 @@ function process_job_payment(supply::SupplyState, total_ase::Float64,
     )
     push!(supply.creator_royalties_pending, payout)
 
-    # Agent conversion — Àṣẹ burned, signal Swibe to mint Dopamine
-    dopamine_amount = agent_share * ASE_TO_DOPAMINE_RATIO
-    supply.total_converted_to_agent = r6(supply.total_converted_to_agent + agent_share)
-    supply.total_burned = r6(supply.total_burned + agent_share)
+    # Agent split — retains Àṣẹ treasury + burns portion to Dopamine capacity
+    # Decision 2026-09-15: agents need spendable Àṣẹ for external costs
+    #   (drone upgrades, Walrus storage, Nostr relay fees, etc.)
+    ase_treasury = r6(agent_share * (ASE_AGENT_TREASURY / (ASE_AGENT_TREASURY + ASE_AGENT_DOPAMINE)))
+    ase_to_dopamine = r6(agent_share - ase_treasury)
+
+    dopamine_signal = ase_to_dopamine * ASE_TO_DOPAMINE_RATIO
+    supply.total_converted_to_agent = r6(supply.total_converted_to_agent + ase_to_dopamine)
+    supply.total_burned = r6(supply.total_burned + ase_to_dopamine)
+    # ase_treasury is NOT burned — it's credited to agent's spendable Àṣẹ balance
 
     return Dict{Symbol,Any}(
         :success => true,
@@ -239,8 +290,9 @@ function process_job_payment(supply::SupplyState, total_ase::Float64,
         :creator_address => creator_address,
         :creator_locked_days => 7,
         :protocol_burned => protocol_burn,
-        :agent_ase_burned => agent_share,
-        :dopamine_signal => dopamine_amount,
+        :agent_ase_treasury => ase_treasury,    # retained as spendable Àṣẹ
+        :agent_ase_to_dopamine => ase_to_dopamine,
+        :dopamine_signal => dopamine_signal,
         :timestamp => timestamp,
     )
 end
@@ -311,6 +363,69 @@ function claim_creator_royalties(supply::SupplyState, creator_address::String,
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DYNAMIC DECAY CONTROLLER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    compute_dynamic_decay(u_smooth::Float64) -> Float64
+
+Compute the daily decay rate from smoothed utilization U ∈ [0,1].
+Formula: decay = DECAY_MIN + (DECAY_MAX - DECAY_MIN) × u_smooth
+Clamped to [DECAY_MIN, DECAY_MAX].
+
+Example outputs:
+  U=0.10 → 0.00289/day  (239-day half-life — idle network)
+  U=0.50 → 0.01045/day  (66-day half-life  — half-full)
+  U=0.90 → 0.01801/day  (38-day half-life  — saturated)
+"""
+function compute_dynamic_decay(u_smooth::Float64)::Float64
+    u = clamp(u_smooth, 0.0, 1.0)
+    decay = DECAY_MIN + (DECAY_MAX - DECAY_MIN) * u
+    return clamp(decay, DECAY_MIN, DECAY_MAX)
+end
+
+"""
+    update_epoch_decay(supply::SupplyState, epoch_utilization::Float64,
+                       timestamp::Int) -> Dict
+
+Update the decay rate at the end of a 7-day Koodu epoch (call on Sabbath).
+- epoch_utilization: time-weighted mean GPU utilization from verified work records
+  (Σ(gpu_seconds × utilization) / Σ(gpu_seconds)) over the epoch
+- Applies EMA smoothing and per-epoch clamp to prevent oscillation.
+- Returns the new rate and diagnostics for ARP receipt anchoring.
+"""
+function update_epoch_decay(supply::SupplyState, epoch_utilization::Float64,
+                             timestamp::Int)::Dict{Symbol,Any}
+    u = clamp(epoch_utilization, 0.0, 1.0)
+
+    # EMA update
+    new_u_smooth = DECAY_EMA_ALPHA * u + (1.0 - DECAY_EMA_ALPHA) * supply.decay_u_smooth
+    supply.decay_u_smooth = new_u_smooth
+
+    # Target rate from smoothed utilization
+    target_rate = compute_dynamic_decay(new_u_smooth)
+
+    # Clamp change per epoch (prevent oscillation)
+    prev_rate = supply.current_decay_rate
+    delta = clamp(target_rate - prev_rate, -DECAY_CLAMP_PER_EPOCH, DECAY_CLAMP_PER_EPOCH)
+    new_rate = clamp(prev_rate + delta, DECAY_MIN, DECAY_MAX)
+
+    supply.current_decay_rate = new_rate
+    supply.last_epoch_timestamp = timestamp
+
+    return Dict{Symbol,Any}(
+        :success => true,
+        :epoch_utilization => u,
+        :u_smooth => new_u_smooth,
+        :prev_decay_rate => prev_rate,
+        :new_decay_rate => new_rate,
+        :delta => delta,
+        :half_life_days => log(2.0) / new_rate,
+        :timestamp => timestamp,
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # STATISTICS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -335,6 +450,10 @@ function get_supply_stats(supply::SupplyState)
         :birth_fee => AGENT_BIRTH_FEE,
         :pending_royalties => length(filter(p -> p[:status] == :locked,
                                            supply.creator_royalties_pending)),
+        :dopamine_pool => supply.total_dopamine_pool,
+        :current_decay_rate => supply.current_decay_rate,
+        :decay_u_smooth => supply.decay_u_smooth,
+        :max_agent_pool_share => MAX_AGENT_POOL_SHARE,
     )
 end
 

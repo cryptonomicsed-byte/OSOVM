@@ -46,7 +46,7 @@ const CORE_OPCODES = Dict{Symbol, UInt8}(
     :AGENT_BIRTH       => 0x3e,  # @agentBirth - Lock 10 Àṣẹ, emit 86B Dopamine + 86M Synapse
     # ToC (Token-of-Compute) opcodes — GPU contribution chain
     # 0x3f: free (between Agent Economy 0x3e and Quadrinity Government 0x40-0x53)
-    # 0x54-0x55: free (between Quadrinity end 0x53 and Church start 0x60)
+    # 0x54-0x55: free (between Quadrinity end 0x53 and GnosisEX start 0x60)
     :GPU_CONTRIBUTION  => 0x3f,  # @gpuContribution - Record verified GPU seconds → ToC mint eligibility
     :TOC_MINT          => 0x54,  # @tocMint - Mint Synapse tokens from accumulated GPU contribution
     :TOC_DECAY         => 0x55,  # @tocDecay - Apply 1%/day decay to Synapse balance
@@ -90,32 +90,32 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
     :PARDON         => 0x52,  # @pardon - Forgive penalty
     :SANCTION       => 0x53,  # @sanction - Punish violation
     
-    # TechGnØŞ.EXE Church (25)
-    :LITURGY        => 0x60,  # @liturgy - Sacred ritual
-    :SERMON         => 0x61,  # @sermon - Teaching
-    :PRAYER         => 0x62,  # @prayer - Invocation
-    :OFFERING       => 0x63,  # @offering - Donation
-    :BLESSING       => 0x64,  # @blessing - Divine favor
-    :CURSE          => 0x65,  # @curse - Spiritual penalty
-    :PROPHET        => 0x66,  # @prophet - Oracle
-    :PRIEST         => 0x67,  # @priest - Clergy
-    :ACOLYTE        => 0x68,  # @acolyte - Initiate
-    :SHRINE         => 0x69,  # @shrine - Sacred space
-    :RELIC          => 0x6a,  # @relic - Artifact
-    :SCRIPTURE      => 0x6b,  # @scripture - Canon
-    :HERESY         => 0x6c,  # @heresy - Doctrinal violation
-    :EXCOMMUNICATE  => 0x6d,  # @excommunicate - Expel
-    :CANONIZE       => 0x6e,  # @canonize - Declare saint
-    :MIRACLE        => 0x6f,  # @miracle - Divine event
-    :PILGRIMAGE     => 0x70,  # @pilgrimage - Sacred journey
-    :FAST           => 0x71,  # @fast - Ritual abstinence
-    :FEAST          => 0x72,  # @feast - Celebration
-    :BAPTISM        => 0x73,  # @baptism - Initiation
-    :COMMUNION      => 0x74,  # @communion - Sacred meal
-    :CONFESSION     => 0x75,  # @confession - Admission
-    :PENANCE        => 0x76,  # @penance - Atonement
-    :ABSOLUTION     => 0x77,  # @absolution - Forgiveness
-    :RESURRECTION   => 0x78,  # @resurrection - Rebirth
+    # GnosisEX Rite (25)
+    :RITE          => 0x60,  # @rite - Sacred formal procedure
+    :TRANSMISSION  => 0x61,  # @transmission - Knowledge broadcast
+    :INVOCATION    => 0x62,  # @invocation - Intentional calling
+    :TRIBUTE       => 0x63,  # @tribute - Contribution
+    :ATTUNEMENT    => 0x64,  # @attunement - Harmonic alignment
+    :BINDING       => 0x65,  # @binding - Constraint
+    :SEER          => 0x66,  # @seer - Visionary
+    :KEEPER        => 0x67,  # @keeper - Sacred authority
+    :ASPIRANT      => 0x68,  # @aspirant - Seeker
+    :SANCTUM       => 0x69,  # @sanctum - Sacred space
+    :ARTIFACT      => 0x6a,  # @artifact - Sacred object
+    :CODEX         => 0x6b,  # @codex - Sacred text
+    :TRANSGRESSION => 0x6c,  # @transgression - Protocol violation
+    :BANISH        => 0x6d,  # @banish - Expel
+    :ENSHRINE      => 0x6e,  # @enshrine - Elevate to honored
+    :MANIFESTATION => 0x6f,  # @manifestation - Spontaneous emergence
+    :PASSAGE       => 0x70,  # @passage - Threshold crossing
+    :VIGIL         => 0x71,  # @vigil - Watchful stillness
+    :CONVOCATION   => 0x72,  # @convocation - Ritual gathering
+    :CONSECRATION  => 0x73,  # @consecration - Making sacred
+    :RESONANCE     => 0x74,  # @resonance - Harmonic joining
+    :DISCLOSURE    => 0x75,  # @disclosure - Transparent acknowledgment
+    :ATONEMENT     => 0x76,  # @atonement - Reparative act
+    :RELEASE       => 0x77,  # @release - Unbinding
+    :RENEWAL       => 0x78,  # @renewal - Cycle rebirth
     
     # SimaaS Hospital (20)
     :PATIENT        => 0x80,  # @patient - Care recipient
@@ -169,14 +169,14 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
     :LIBATION       => 0xae,  # @libation - Pour honor
     :INITIATION     => 0xaf,  # @initiation - Sacred entry
     :DIVINER        => 0xb0,  # @diviner - Oracle priest
-    :BABALAWO       => 0xb1,  # @babalawo - Ifá priest
-    :IYALAWO        => 0xb2,  # @iyalawo - Ifá priestess
-    :ILE            => 0xb3,  # @ile - Sacred house
-    :EGBE           => 0xb4,  # @egbe - Spiritual society
+    :SAGE          => 0xb1,  # @sage - Wisdom keeper
+    :LUMINARY      => 0xb2,  # @luminary - Illuminated keeper
+    :HAVEN         => 0xb3,  # @haven - Sanctuary
+    :COLLECTIVE    => 0xb4,  # @collective - Spirit assembly
     :ORI            => 0xb5,  # @ori - Inner head, destiny
-    :EGUN           => 0xb6,  # @egun - Ancestor spirit
-    :AJOGUN         => 0xb7,  # @ajogun - Malevolent force
-    :IBEJI          => 0xb8,  # @ibeji - Twin spirit
+    :ANCESTOR      => 0xb6,  # @ancestor - Ancestral presence
+    :ADVERSARY     => 0xb7,  # @adversary - Disruptive force
+    :TWIN          => 0xb8,  # @twin - Dual spawn
     
     # Economic Extensions (20)
     :MARKET         => 0xc0,  # @market - Trading venue

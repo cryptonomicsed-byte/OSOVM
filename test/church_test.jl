@@ -1,8 +1,8 @@
 # test/church_test.jl — TechGnØŞ.EXE Church cluster real-dispatch tests
-# Verifies: LITURGY, SERMON, PRAYER, OFFERING, BLESSING, CURSE, PROPHET,
-# PRIEST, ACOLYTE, SHRINE, RELIC, SCRIPTURE, HERESY, EXCOMMUNICATE,
-# CANONIZE, MIRACLE, PILGRIMAGE, FAST, FEAST, BAPTISM, COMMUNION,
-# CONFESSION, PENANCE, ABSOLUTION, RESURRECTION now have real stateful
+# Verifies: RITE, TRANSMISSION, INVOCATION, TRIBUTE, ATTUNEMENT, BINDING, SEER,
+# KEEPER, ASPIRANT, SANCTUM, ARTIFACT, CODEX, TRANSGRESSION, BANISH,
+# ENSHRINE, MANIFESTATION, PASSAGE, VIGIL, CONVOCATION, CONSECRATION, RESONANCE,
+# DISCLOSURE, ATONEMENT, RELEASE, RENEWAL now have real stateful
 # VM-enforced logic, not decorative echoes/call_ase_vault() offload.
 
 using Test
@@ -23,7 +23,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         end
     end
 
-    @testset "ACOLYTE requires priest mentor, PRIEST requires prior acolyte" begin
+    @testset "ASPIRANT requires priest mentor, KEEPER requires prior acolyte" begin
         vm = OsoVM.create_vm(final_signer="bino")
         r1 = OsoVM.execute_instruction(vm, Instr(0x68, Dict{Symbol,Any}(:name => "aco1", :mentor => "priest1")))
         @test r1["success"] == false  # priest1 doesn't exist yet
@@ -44,7 +44,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r4["success"] == false
     end
 
-    @testset "SERMON requires ordained priest" begin
+    @testset "TRANSMISSION requires ordained priest" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x61, Dict{Symbol,Any}(:id => "s1", :preacher => "nobody")))
         @test r1["success"] == false
@@ -53,7 +53,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r2["success"] == true
     end
 
-    @testset "SHRINE requires priest keeper, OFFERING/RELIC require existing shrine" begin
+    @testset "SANCTUM requires priest keeper, TRIBUTE/ARTIFACT require existing shrine" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x69, Dict{Symbol,Any}(:id => "sh1", :keeper => "nobody")))
         @test r1["success"] == false
@@ -74,7 +74,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r7["success"] == true
     end
 
-    @testset "BLESSING requires priest grantor" begin
+    @testset "ATTUNEMENT requires priest grantor" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x64, Dict{Symbol,Any}(:target => "t1", :grantor => "nobody")))
         @test r1["success"] == false
@@ -83,7 +83,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r2["success"] == true
     end
 
-    @testset "CURSE requires target and reason" begin
+    @testset "BINDING requires target and reason" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x65, Dict{Symbol,Any}(:target => "", :reason => "x")))
         @test r1["success"] == false
@@ -91,7 +91,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r2["success"] == true
     end
 
-    @testset "PROPHET recognition is final_signer-gated" begin
+    @testset "SEER recognition is final_signer-gated" begin
         vm = OsoVM.create_vm(final_signer="bino")
         vm.current_sender = "not_bino"
         r1 = OsoVM.execute_instruction(vm, Instr(0x66, Dict{Symbol,Any}(:name => "elder1")))
@@ -103,7 +103,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r3["success"] == false  # already recognized
     end
 
-    @testset "HERESY requires clergy target, EXCOMMUNICATE requires open heresy + final_signer" begin
+    @testset "TRANSGRESSION requires clergy target, BANISH requires open heresy + final_signer" begin
         vm = OsoVM.create_vm(final_signer="bino")
         vm.priests["p1"] = "genesis"
         r1 = OsoVM.execute_instruction(vm, Instr(0x6c, Dict{Symbol,Any}(:id => "h1", :accused => "not_clergy", :charge => "c")))
@@ -121,7 +121,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test vm.excommunicated["p1"] == true
     end
 
-    @testset "CANONIZE blocked for excommunicated, final_signer only" begin
+    @testset "ENSHRINE blocked for excommunicated, final_signer only" begin
         vm = OsoVM.create_vm(final_signer="bino")
         vm.excommunicated["bad1"] = true
         vm.current_sender = "bino"
@@ -133,7 +133,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r3["success"] == false  # already canonized
     end
 
-    @testset "SCRIPTURE, MIRACLE, PILGRIMAGE, FAST, FEAST basic invariants" begin
+    @testset "CODEX, MANIFESTATION, PASSAGE, VIGIL, CONVOCATION basic invariants" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x6b, Dict{Symbol,Any}(:id => "sc1", :text => "")))
         @test r1["success"] == false
@@ -161,7 +161,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r9["success"] == true
     end
 
-    @testset "BAPTISM cannot double-baptize, COMMUNION requires baptism + priest" begin
+    @testset "CONSECRATION cannot double-baptize, RESONANCE requires baptism + priest" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x73, Dict{Symbol,Any}(:name => "believer1")))
         @test r1["success"] == true
@@ -175,7 +175,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r4["success"] == true
     end
 
-    @testset "CONFESSION -> PENANCE -> ABSOLUTION lifecycle" begin
+    @testset "DISCLOSURE -> ATONEMENT -> RELEASE lifecycle" begin
         vm = OsoVM.create_vm()
         vm.priests["p1"] = "genesis"
         r1 = OsoVM.execute_instruction(vm, Instr(0x75, Dict{Symbol,Any}(:id => "conf1", :priest => "unknown_priest")))
@@ -202,7 +202,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r8["success"] == false  # confession already absolved
     end
 
-    @testset "RESURRECTION final_signer-gated, requires witness" begin
+    @testset "RENEWAL final_signer-gated, requires witness" begin
         vm = OsoVM.create_vm(final_signer="bino")
         vm.current_sender = "not_bino"
         r1 = OsoVM.execute_instruction(vm, Instr(0x78, Dict{Symbol,Any}(:id => "res1", :subject => "s1", :witnessed_by => "w1")))

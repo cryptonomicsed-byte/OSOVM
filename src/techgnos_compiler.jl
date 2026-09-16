@@ -15,7 +15,7 @@ export compile_tech, TechContract, TechFunction, TechType
 # TechGnØŞ Type System
 @enum TechType begin
     ASE         # Àṣẹ token (Float64)
-    SHRINE      # Shrine address (String)
+    SANCTUM      # Shrine address (String)
     ADDRESS     # Wallet address (String)
     UINT16      # Unsigned 16-bit (wallet IDs)
     UINT256     # Unsigned 256-bit (amounts)
@@ -290,7 +290,7 @@ function parse_type(p::Parser)::TechType
     
     type_map = Dict(
         "ase" => ASE,
-        "shrine" => SHRINE,
+        "sanctum" => SANCTUM,
         "address" => ADDRESS,
         "uint16" => UINT16,
         "uint256" => UINT256,

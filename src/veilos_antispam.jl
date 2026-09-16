@@ -25,14 +25,14 @@ export SimulationRequest, SimulationReceipt, WitnessVote,
        validate_simulation, create_receipt, calculate_novelty_bonus,
        check_daily_cap, burn_ase, verify_witness_quorum,
        apply_tithe, check_sabbath, check_ouroboros,
-       pilgrimage_progress, PilgrimageGate
+       pilgrimage_progress, PassageGate
 
 # ============================================================================
 # CONSTANTS & GATES
 # ============================================================================
 
 """7 Sacred Gates of the Pilgrimage"""
-const PILGRIMAGE_GATES = [
+const PASSAGE_GATES = [
     "Ọya" => (city="Mexico City", veils_needed=7, ase_target=60.9),
     "Ogun" => (city="Berlin", veils_needed=7, ase_target=60.9),
     "Oṣun" => (city="Sydney", veils_needed=7, ase_target=60.9),
@@ -118,7 +118,7 @@ struct SimulationReceipt
 end
 
 """Pilgrimage gate"""
-struct PilgrimageGate
+struct PassageGate
     name::String
     city::String
     veils_needed::Int
@@ -142,7 +142,7 @@ const RECEIPT_LOG = SimulationReceipt[]
 const WITNESSES = Dict{Int, String}()  # witness_id -> public_key
 
 """Citizen pilgrimage progress"""
-const PILGRIMAGE_PROGRESS = Dict{String, Vector{PilgrimageGate}}()
+const PASSAGE_PROGRESS = Dict{String, Vector{PassageGate}}()
 
 """Novelty tracker: (citizen, veil_id) -> used?"""
 const NOVELTY_TRACKER = Set{Tuple{String, Int}}()
@@ -441,10 +441,10 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
     # Determine current gate
     current_gate = get_current_gate(request.citizen_id)
     sims_in_gate = count_sims_in_gate(request.citizen_id, current_gate)
-    # PILGRIMAGE_GATES is an ordered Vector{Pair} (line 513 relies on that
+    # PASSAGE_GATES is an ordered Vector{Pair} (line 513 relies on that
     # ordering), not a Dict -- indexing it directly by a String key threw
     # ArgumentError. Look it up via a Dict view instead.
-    gate_target = Dict(PILGRIMAGE_GATES)[current_gate].ase_target
+    gate_target = Dict(PASSAGE_GATES)[current_gate].ase_target
     
     receipt = SimulationReceipt(
         sim_id,
@@ -482,7 +482,7 @@ function create_receipt(request::SimulationRequest, f1_score::Float64, mse::Floa
 end
 
 # ============================================================================
-# PILGRIMAGE TRACKING
+# PASSAGE TRACKING
 # ============================================================================
 
 """
@@ -491,11 +491,11 @@ end
 Get citizen's current pilgrimage gate.
 """
 function get_current_gate(citizen_id::String)::String
-    if !haskey(PILGRIMAGE_PROGRESS, citizen_id)
+    if !haskey(PASSAGE_PROGRESS, citizen_id)
         init_pilgrimage(citizen_id)
     end
     
-    gates = PILGRIMAGE_PROGRESS[citizen_id]
+    gates = PASSAGE_PROGRESS[citizen_id]
     for gate in gates
         if gate.status ∈ ["PENDING", "ACTIVE"]
             return gate.name
@@ -511,11 +511,11 @@ end
 Initialize pilgrimage for new citizen.
 """
 function init_pilgrimage(citizen_id::String)
-    gates = PilgrimageGate[]
+    gates = PassageGate[]
     
-    for (i, (name, data)) in enumerate(PILGRIMAGE_GATES)
+    for (i, (name, data)) in enumerate(PASSAGE_GATES)
         status = i == 1 ? "ACTIVE" : "PENDING"
-        push!(gates, PilgrimageGate(
+        push!(gates, PassageGate(
             name,
             data.city,
             data.veils_needed,
@@ -526,7 +526,7 @@ function init_pilgrimage(citizen_id::String)
         ))
     end
     
-    PILGRIMAGE_PROGRESS[citizen_id] = gates
+    PASSAGE_PROGRESS[citizen_id] = gates
 end
 
 """
@@ -535,7 +535,7 @@ end
 Count simulations completed in a gate.
 """
 function count_sims_in_gate(citizen_id::String, gate_name::String)::Int
-    if !haskey(PILGRIMAGE_PROGRESS, citizen_id)
+    if !haskey(PASSAGE_PROGRESS, citizen_id)
         return 0
     end
     
@@ -549,11 +549,11 @@ end
 Get full pilgrimage status.
 """
 function pilgrimage_progress(citizen_id::String)::Dict
-    if !haskey(PILGRIMAGE_PROGRESS, citizen_id)
+    if !haskey(PASSAGE_PROGRESS, citizen_id)
         init_pilgrimage(citizen_id)
     end
     
-    gates = PILGRIMAGE_PROGRESS[citizen_id]
+    gates = PASSAGE_PROGRESS[citizen_id]
     total_ase = sum(g.ase_earned for g in gates)
     total_sims = sum(g.sims_completed for g in gates)
     

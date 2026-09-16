@@ -2,7 +2,7 @@
 # Verifies: ORISA_OBATALA, ORISA_OGUN, ORISA_YEMOJA, ORISA_SANGO,
 # ORISA_OSHUN, ORISA_OYA, ORISA_ESU, ORISA_ORUNMILA, IFA_DIVINATION, ODU,
 # ESE, EBO, ASE_INVOCATION, ANCESTRAL_CALL, LIBATION, INITIATION,
-# DIVINER, BABALAWO, IYALAWO, ILE, EGBE, ORI, EGUN, AJOGUN, IBEJI now have
+# DIVINER, SAGE, LUMINARY, HAVEN, COLLECTIVE, ORI, ANCESTOR, ADVERSARY, TWIN now have
 # real stateful VM-enforced logic, not decorative fixed responses or
 # call_ase_vault() offload.
 
@@ -39,7 +39,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test haskey(vm.orisa_invocations, "inv2")
     end
 
-    @testset "INITIATION -> DIVINER -> BABALAWO/IYALAWO lineage" begin
+    @testset "INITIATION -> DIVINER -> SAGE/LUMINARY lineage" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0xb0, Dict{Symbol,Any}(:name => "seeker1")))
         @test r1["success"] == false  # not initiated yet
@@ -92,7 +92,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r4["success"] == true
     end
 
-    @testset "EGUN registration gates LIBATION" begin
+    @testset "ANCESTOR registration gates LIBATION" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0xae, Dict{Symbol,Any}(:egun_id => "unknown")))
         @test r1["success"] == false
@@ -102,7 +102,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         @test r3["success"] == true
     end
 
-    @testset "ORI requires initiation, ILE/EGBE/AJOGUN/IBEJI basic invariants" begin
+    @testset "ORI requires initiation, HAVEN/COLLECTIVE/ADVERSARY/TWIN basic invariants" begin
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0xb5, Dict{Symbol,Any}(:person => "p1")))
         @test r1["success"] == false

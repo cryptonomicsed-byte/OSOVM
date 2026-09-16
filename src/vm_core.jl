@@ -8,10 +8,12 @@ module VMCore
 include("opcodes.jl")
 include("oso_compiler.jl")
 include("ase_supply.jl")
+include("constants.jl")
 
 using .Opcodes
 using .OsoCompiler: Instruction, IR
 using .AseSupply
+using .Constants
 
 export VMState, Block, Transaction, Receipt,
        apply_block, initial_state, copy_state,
@@ -153,7 +155,7 @@ function op_impact(state::VMState, args::Dict{Symbol,Any})
 
     witness_mult = min(quorum, 7)
     gross     = r6(1.0 * witness_mult * ase)
-    tithe_rate = 0.0369
+    tithe_rate = Constants.ESU_TITHE_RATE   # 0.0369 — from TOC_CONSTANTS.toml [esu].tithe_rate
     tithe     = r6(gross * tithe_rate)
     net_ase   = r6(gross - tithe)
 
@@ -253,7 +255,7 @@ end
 
 function op_tithe(state::VMState, args::Dict{Symbol,Any})
     sender = args[:sender]::String
-    rate   = Float64(get(args, :rate, 0.0369))
+    rate   = Float64(get(args, :rate, Constants.ESU_TITHE_RATE))  # 0.0369 — TOC_CONSTANTS.toml [esu].tithe_rate
     amount = r6(Float64(get(args, :amount, get(state.balances, sender, 0.0))))
 
     tithe_total = r6(amount * rate)
@@ -618,7 +620,9 @@ function op_toc_decay(state::VMState, args::Dict{Symbol,Any})
         )
     end
 
-    new_bal = floor(Int, prev_bal * 0.99)
+    # 1%/day decay — TOC_CONSTANTS.toml [synapse].daily_decay_rate = 0.01
+    decay_rate = Constants.SYNAPSE_DAILY_DECAY_RATE
+    new_bal = floor(Int, prev_bal * (1.0 - decay_rate))
     decayed = prev_bal - new_bal
 
     s = copy_state(state)

@@ -11,6 +11,12 @@ include("seven.jl")
 include("world_tiles.jl")
 include("proof/proof_engine.jl")
 
+# Phase 15 — Ọ̀ṢỌ́ L1 state structs (AgentState + WorkObject)
+include("state/mod.jl")
+
+# Phase 20.3 — TOC constants loaded from canonical TOML
+include("constants.jl")
+
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
@@ -106,45 +112,45 @@ mutable struct VMState
     courts::Dict{String, Dict{Symbol, Any}}
     verdicts::Dict{String, Dict{Symbol, Any}}
     sanctions::Dict{String, Dict{Symbol, Any}}
-    # TechGnØŞ.EXE Church cluster (real stateful tracking, replaces
-    # call_ase_vault() offload for LITURGY/SERMON/PRAYER/OFFERING/BLESSING/
-    # CURSE/PROPHET/PRIEST/ACOLYTE/SHRINE/RELIC/SCRIPTURE/HERESY/
-    # EXCOMMUNICATE/CANONIZE/MIRACLE/PILGRIMAGE/FAST/FEAST/BAPTISM/
-    # COMMUNION/CONFESSION/PENANCE/ABSOLUTION/RESURRECTION). Clergy
-    # hierarchy (acolyte -> priest) and confession/absolution lifecycle
-    # are the real invariants; final_signer stands in for church authority
-    # on canonize/excommunicate, matching Quadrinity's use of final_signer.
-    liturgies::Dict{String, Dict{Symbol, Any}}
-    sermons::Dict{String, Dict{Symbol, Any}}
-    prayers::Dict{String, Dict{Symbol, Any}}
-    offerings::Dict{String, Dict{Symbol, Any}}
-    blessings::Dict{String, Dict{Symbol, Any}}
-    curses::Dict{String, Dict{Symbol, Any}}
-    prophets::Dict{String, Bool}                   # name => recognized
-    priests::Dict{String, String}                  # name => ordained_by
-    acolytes::Dict{String, String}                  # name => mentor priest
-    shrines::Dict{String, Dict{Symbol, Any}}
-    relics::Dict{String, Dict{Symbol, Any}}
-    scriptures::Dict{String, Dict{Symbol, Any}}
-    heresies::Dict{String, Dict{Symbol, Any}}
-    excommunicated::Dict{String, Bool}
-    canonized::Dict{String, Bool}
-    miracles::Dict{String, Dict{Symbol, Any}}
-    pilgrimages::Dict{String, Dict{Symbol, Any}}
-    fasts::Dict{String, Dict{Symbol, Any}}
-    feasts::Dict{String, Dict{Symbol, Any}}
-    baptized::Dict{String, Bool}
-    communions::Dict{String, Dict{Symbol, Any}}
-    confessions::Dict{String, Dict{Symbol, Any}}
-    penances::Dict{String, Dict{Symbol, Any}}
-    resurrections::Dict{String, Dict{Symbol, Any}}
+    # GnosisEX Rite cluster (real stateful tracking, replaces
+    # call_ase_vault() offload for RITE/TRANSMISSION/INVOCATION/TRIBUTE/ATTUNEMENT/
+    # BINDING/SEER/KEEPER/ASPIRANT/SANCTUM/ARTIFACT/CODEX/TRANSGRESSION/
+    # BANISH/ENSHRINE/MANIFESTATION/PASSAGE/VIGIL/CONVOCATION/CONSECRATION/
+    # RESONANCE/DISCLOSURE/ATONEMENT/RELEASE/RENEWAL). Aspirant
+    # hierarchy (aspirant -> keeper) and disclosure/release lifecycle
+    # are the real invariants; final_signer stands in for rite authority
+    # on enshrine/banish, matching Quadrinity's use of final_signer.
+    rites::Dict{String, Dict{Symbol, Any}}
+    transmissions::Dict{String, Dict{Symbol, Any}}
+    invocations::Dict{String, Dict{Symbol, Any}}
+    tributes::Dict{String, Dict{Symbol, Any}}
+    attunements::Dict{String, Dict{Symbol, Any}}
+    bindings::Dict{String, Dict{Symbol, Any}}
+    seers::Dict{String, Bool}                   # name => recognized
+    keepers::Dict{String, String}                  # name => ordained_by
+    aspirants::Dict{String, String}                  # name => mentor priest
+    sanctums::Dict{String, Dict{Symbol, Any}}
+    artifacts::Dict{String, Dict{Symbol, Any}}
+    codices::Dict{String, Dict{Symbol, Any}}
+    transgressions::Dict{String, Dict{Symbol, Any}}
+    banished::Dict{String, Bool}
+    enshrined::Dict{String, Bool}
+    manifestations::Dict{String, Dict{Symbol, Any}}
+    passages::Dict{String, Dict{Symbol, Any}}
+    vigils::Dict{String, Dict{Symbol, Any}}
+    convocations::Dict{String, Dict{Symbol, Any}}
+    consecrated::Dict{String, Bool}
+    resonances::Dict{String, Dict{Symbol, Any}}
+    disclosures::Dict{String, Dict{Symbol, Any}}
+    atonements::Dict{String, Dict{Symbol, Any}}
+    renewals::Dict{String, Dict{Symbol, Any}}
     # SimaaS Hospital cluster (real stateful tracking, replaces
     # call_ase_vault() offload for PATIENT/DIAGNOSIS/TREATMENT/
     # PRESCRIPTION/SURGERY/THERAPY/VITALS/ADMISSION/DISCHARGE/EMERGENCY/
     # TRIAGE/WARD/ICU/MORGUE/AUTOPSY/QUARANTINE/VACCINE/PANDEMIC/
     # RECOVERY/RELAPSE). A patient's care lifecycle (register -> diagnose
     # -> admit -> discharge, or -> morgue -> autopsy) is the real
-    # invariant chain, mirroring Church's clergy progression pattern.
+    # invariant chain, mirroring GnosisEX's keeper progression pattern.
     patients::Dict{String, Dict{Symbol, Any}}
     diagnoses::Dict{String, Dict{Symbol, Any}}
     treatments::Dict{String, Dict{Symbol, Any}}
@@ -165,7 +171,7 @@ mutable struct VMState
     # Òrìṣà Spiritual Layer cluster (real stateful tracking, replaces both
     # call_ase_vault() offload and the two decorative fixed-response
     # invocations ORISA_OBATALA/ORISA_ESU used to be). Divination lineage
-    # (INITIATION -> DIVINER -> BABALAWO/IYALAWO) and the divination chain
+    # (INITIATION -> DIVINER -> SAGE/LUMINARY) and the divination chain
     # (IFA_DIVINATION -> ODU -> ESE) are the real invariant chains.
     orisa_invocations::Dict{String, Dict{Symbol, Any}}   # id => {orisa, invoker}
     divinations::Dict{String, Dict{Symbol, Any}}
@@ -177,14 +183,14 @@ mutable struct VMState
     libations::Dict{String, Dict{Symbol, Any}}
     initiated::Dict{String, Bool}
     diviners::Dict{String, String}          # name => initiated_by
-    babalawos::Dict{String, Bool}
-    iyalawos::Dict{String, Bool}
-    iles::Dict{String, Dict{Symbol, Any}}
+    sages::Dict{String, Bool}
+    luminaries::Dict{String, Bool}
+    havens::Dict{String, Dict{Symbol, Any}}
     egbes::Dict{String, Dict{Symbol, Any}}
     oris::Dict{String, Dict{Symbol, Any}}   # person => {destiny}, requires initiated
-    eguns::Dict{String, Dict{Symbol, Any}}
-    ajoguns::Dict{String, Dict{Symbol, Any}}
-    ibejis::Dict{String, Dict{Symbol, Any}}
+    ancestors::Dict{String, Dict{Symbol, Any}}
+    adversaries::Dict{String, Dict{Symbol, Any}}
+    twins::Dict{String, Dict{Symbol, Any}}
     # Economic Extensions cluster (real stateful tracking, replaces
     # call_ase_vault() offload for MARKET/ORDER/LIQUIDITY/SWAP/YIELD/
     # BOND/EQUITY/DIVIDEND/INTEREST/COLLATERAL/LOAN/REPAYMENT/DEFAULT/
@@ -301,31 +307,31 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # courts
         Dict{String, Dict{Symbol, Any}}(),   # verdicts
         Dict{String, Dict{Symbol, Any}}(),   # sanctions
-        # TechGnØŞ.EXE Church cluster
-        Dict{String, Dict{Symbol, Any}}(),   # liturgies
-        Dict{String, Dict{Symbol, Any}}(),   # sermons
-        Dict{String, Dict{Symbol, Any}}(),   # prayers
-        Dict{String, Dict{Symbol, Any}}(),   # offerings
-        Dict{String, Dict{Symbol, Any}}(),   # blessings
-        Dict{String, Dict{Symbol, Any}}(),   # curses
-        Dict{String, Bool}(),                # prophets
-        Dict{String, String}(),              # priests
-        Dict{String, String}(),              # acolytes
-        Dict{String, Dict{Symbol, Any}}(),   # shrines
-        Dict{String, Dict{Symbol, Any}}(),   # relics
-        Dict{String, Dict{Symbol, Any}}(),   # scriptures
-        Dict{String, Dict{Symbol, Any}}(),   # heresies
-        Dict{String, Bool}(),                # excommunicated
-        Dict{String, Bool}(),                # canonized
-        Dict{String, Dict{Symbol, Any}}(),   # miracles
-        Dict{String, Dict{Symbol, Any}}(),   # pilgrimages
-        Dict{String, Dict{Symbol, Any}}(),   # fasts
-        Dict{String, Dict{Symbol, Any}}(),   # feasts
-        Dict{String, Bool}(),                # baptized
-        Dict{String, Dict{Symbol, Any}}(),   # communions
-        Dict{String, Dict{Symbol, Any}}(),   # confessions
-        Dict{String, Dict{Symbol, Any}}(),   # penances
-        Dict{String, Dict{Symbol, Any}}(),   # resurrections
+        # GnosisEX Rite cluster
+        Dict{String, Dict{Symbol, Any}}(),   # rites
+        Dict{String, Dict{Symbol, Any}}(),   # transmissions
+        Dict{String, Dict{Symbol, Any}}(),   # invocations
+        Dict{String, Dict{Symbol, Any}}(),   # tributes
+        Dict{String, Dict{Symbol, Any}}(),   # attunements
+        Dict{String, Dict{Symbol, Any}}(),   # bindings
+        Dict{String, Bool}(),                # seers
+        Dict{String, String}(),              # keepers
+        Dict{String, String}(),              # aspirants
+        Dict{String, Dict{Symbol, Any}}(),   # sanctums
+        Dict{String, Dict{Symbol, Any}}(),   # artifacts
+        Dict{String, Dict{Symbol, Any}}(),   # codices
+        Dict{String, Dict{Symbol, Any}}(),   # transgressions
+        Dict{String, Bool}(),                # banished
+        Dict{String, Bool}(),                # enshrined
+        Dict{String, Dict{Symbol, Any}}(),   # manifestations
+        Dict{String, Dict{Symbol, Any}}(),   # passages
+        Dict{String, Dict{Symbol, Any}}(),   # vigils
+        Dict{String, Dict{Symbol, Any}}(),   # convocations
+        Dict{String, Bool}(),                # consecrated
+        Dict{String, Dict{Symbol, Any}}(),   # resonances
+        Dict{String, Dict{Symbol, Any}}(),   # disclosures
+        Dict{String, Dict{Symbol, Any}}(),   # atonements
+        Dict{String, Dict{Symbol, Any}}(),   # renewals
         # SimaaS Hospital cluster
         Dict{String, Dict{Symbol, Any}}(),   # patients
         Dict{String, Dict{Symbol, Any}}(),   # diagnoses
@@ -355,14 +361,14 @@ function create_vm(;
         Dict{String, Dict{Symbol, Any}}(),   # libations
         Dict{String, Bool}(),                # initiated
         Dict{String, String}(),              # diviners
-        Dict{String, Bool}(),                # babalawos
-        Dict{String, Bool}(),                # iyalawos
-        Dict{String, Dict{Symbol, Any}}(),   # iles
+        Dict{String, Bool}(),                # sages
+        Dict{String, Bool}(),                # luminaries
+        Dict{String, Dict{Symbol, Any}}(),   # havens
         Dict{String, Dict{Symbol, Any}}(),   # egbes
         Dict{String, Dict{Symbol, Any}}(),   # oris
-        Dict{String, Dict{Symbol, Any}}(),   # eguns
-        Dict{String, Dict{Symbol, Any}}(),   # ajoguns
-        Dict{String, Dict{Symbol, Any}}(),   # ibejis
+        Dict{String, Dict{Symbol, Any}}(),   # ancestors
+        Dict{String, Dict{Symbol, Any}}(),   # adversaries
+        Dict{String, Dict{Symbol, Any}}(),   # twins
         # Economic Extensions cluster
         Dict{String, Dict{Symbol, Any}}(),   # markets
         Dict{String, Dict{Symbol, Any}}(),   # orders
@@ -540,7 +546,7 @@ function is_critical(opcode::UInt8)::Bool
         # replace call_ase_vault() offload for all 20 opcodes 0x40-0x53.
         0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
         0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53,
-        # TechGnØŞ.EXE Church cluster: real stateful handlers below
+        # GnosisEX Rite cluster: real stateful handlers below
         # replace call_ase_vault() offload for all 25 opcodes 0x60-0x78.
         0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
         0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73,
@@ -598,6 +604,15 @@ Gate function for TOC_MINT (0x54). Returns true only when:
 
 Fail-closed: any missing data returns false.
 """
+"""
+    is_fully_verified(vm, agent_id, claimed_gpu_seconds) -> Bool
+
+LEGACY gate — GPU-specific.  Kept for backward compatibility with TOC_MINT (0x54)
+callers that have not yet been migrated to the generalized WorkClaim API.
+
+New code should use:
+    is_fully_verified(vm, claim::Dict) -> Bool
+"""
 function is_fully_verified(vm::VMState, agent_id::AbstractString, claimed_gpu_seconds::Float64)::Bool
     if claimed_gpu_seconds <= 0.0
         return false
@@ -618,6 +633,107 @@ function is_fully_verified(vm::VMState, agent_id::AbstractString, claimed_gpu_se
     end
 
     return has_anchored_contribution
+end
+
+"""
+    is_fully_verified(vm, claim::Dict) -> Bool
+
+GENERALIZED gate — accepts a WorkClaim dict with any work domain.
+This is the platform-level verification function.
+
+A WorkClaim dict must contain:
+  claim_id, agent_id, device_id, domain (string), claimed_quantity (>0),
+  input_commitment (if required by domain), output_commitment (if required),
+  measurement_commitment (if required — e.g. print measurement, flight telemetry),
+  witness_receipts (array, len >= witness_policy.min_witnesses),
+  zangbeto_anchor (required for Dopamine minting).
+
+Domains:   "gpu_compute" | "simulation" | "sim_to_real" | "print_job"
+           "aerial_flight" | "ground_robot" | "sci_sim" | "spatial_capture" | "custom/*"
+
+sim_to_real receives 5x multiplier; aerial/ground/print receive 2-3x.
+See TOC_CONSTANTS.toml [bonus_ladder] for governance-configurable overrides.
+
+Fail-closed: any missing required field returns false.
+"""
+function is_fully_verified(vm::VMState, claim::Dict)::Bool
+    # Quantity must be positive
+    qty = get(claim, "claimed_quantity", 0.0)
+    if qty <= 0.0
+        return false
+    end
+
+    domain = get(claim, "domain", "")
+    agent_id = get(claim, "agent_id", "")
+
+    # Zàngbétò anchor is mandatory for all Dopamine minting
+    anchor = get(claim, "zangbeto_anchor", nothing)
+    if isnothing(anchor) || anchor == ""
+        return false
+    end
+
+    # Witness receipts
+    witnesses = get(claim, "witness_receipts", [])
+    min_w = get(get(claim, "witness_policy", Dict()), "min_witnesses", 1)
+    if length(witnesses) < min_w
+        return false
+    end
+
+    # Domain-specific evidence checks
+    ev = get(claim, "evidence", Dict())
+    if get(ev, "require_input_hash", false) && isnothing(get(claim, "input_commitment", nothing))
+        return false
+    end
+    if get(ev, "require_output_hash", false) && isnothing(get(claim, "output_commitment", nothing))
+        return false
+    end
+    # sim_to_real and print_job require measurement_commitment
+    if get(ev, "require_measurement", false) && isnothing(get(claim, "measurement_commitment", nothing))
+        return false
+    end
+
+    # For GPU domains: also check legacy toc_contributions ledger
+    if domain == "gpu_compute" || domain == ""
+        cumulative = get(vm.toc_contributions, agent_id, 0.0)
+        if cumulative < qty
+            return false
+        end
+    end
+
+    return true
+end
+
+"""
+    compute_score(claim::Dict) -> Float64
+
+Returns the weighted compute score for a verified claim.
+Score = claimed_quantity × effective_multiplier.
+Used for Dopamine allocation in TOC_MINT and EndBlock.
+
+Multipliers (governance-configurable via TOC_CONSTANTS [bonus_ladder]):
+  gpu_compute     1.0x   simulation      1.0x
+  print_job       2.0x   sci_sim         2.0x   spatial_capture 2.0x
+  aerial_flight   3.0x   ground_robot    3.0x
+  sim_to_real     5.0x   (default; governance may raise to 10x)
+"""
+function compute_score(claim::Dict)::Float64
+    if !is_fully_verified(VMState(), claim)  # pass empty vm for non-gpu domains
+        return 0.0
+    end
+    domain_multipliers = Dict(
+        "gpu_compute"     => 1.0,
+        "simulation"      => 1.0,
+        "sim_to_real"     => 5.0,
+        "print_job"       => 2.0,
+        "aerial_flight"   => 3.0,
+        "ground_robot"    => 3.0,
+        "sci_sim"         => 2.0,
+        "spatial_capture" => 2.0,
+    )
+    domain = get(claim, "domain", "gpu_compute")
+    mult = get(claim, "bonus_multiplier_override",
+               get(domain_multipliers, domain, 1.0))
+    return get(claim, "claimed_quantity", 0.0) * mult
 end
 
 function call_ase_vault(instr::OsoCompiler.Instruction)::Any
@@ -906,271 +1022,271 @@ function handle_quadrinity_government(vm::VMState, opcode::UInt8, args)::Any
     end
 end
 
-# TechGnØŞ.EXE Church cluster (real stateful tracking, not decorative).
+# GnosisEX Rite cluster (real stateful tracking, not decorative).
 # Split into 5 sub-functions of 5 opcodes each from the start -- a single
 # 20-branch function (Quadrinity Government) reproducibly hung julia's LLVM
 # codegen for 90s+; keeping each function small avoids that pathology.
-function handle_church_1(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0x60  # LITURGY -- sacred ritual
+function handle_rite_1(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x60  # RITE -- sacred formal procedure
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "liturgy id required", "success" => false)
-        haskey(vm.liturgies, id) && return Dict("error" => "liturgy already exists: $id", "success" => false)
-        vm.liturgies[id] = Dict{Symbol, Any}(:id => id, :ritual => get(args, :ritual, ""), :celebrant => vm.current_sender)
-        return Dict("liturgy" => id, "success" => true)
+        isempty(id) && return Dict("error" => "rite id required", "success" => false)
+        haskey(vm.rites, id) && return Dict("error" => "rite already exists: $id", "success" => false)
+        vm.rites[id] = Dict{Symbol, Any}(:id => id, :ritual => get(args, :ritual, ""), :celebrant => vm.current_sender)
+        return Dict("rite" => id, "success" => true)
 
-    elseif opcode == 0x61  # SERMON -- teaching, requires an ordained priest
+    elseif opcode == 0x61  # TRANSMISSION -- knowledge broadcast, requires an ordained priest
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "sermon id required", "success" => false)
+        isempty(id) && return Dict("error" => "transmission id required", "success" => false)
         preacher = get(args, :preacher, vm.current_sender)
-        haskey(vm.priests, preacher) || return Dict("error" => "preacher must be an ordained priest: $preacher", "success" => false)
-        vm.sermons[id] = Dict{Symbol, Any}(:id => id, :preacher => preacher, :topic => get(args, :topic, ""))
-        return Dict("sermon" => id, "success" => true)
+        haskey(vm.keepers, preacher) || return Dict("error" => "preacher must be an ordained keeper: $preacher", "success" => false)
+        vm.transmissions[id] = Dict{Symbol, Any}(:id => id, :preacher => preacher, :topic => get(args, :topic, ""))
+        return Dict("transmission" => id, "success" => true)
 
-    elseif opcode == 0x62  # PRAYER -- invocation
+    elseif opcode == 0x62  # INVOCATION -- intentional calling
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "prayer id required", "success" => false)
-        haskey(vm.prayers, id) && return Dict("error" => "prayer already exists: $id", "success" => false)
-        vm.prayers[id] = Dict{Symbol, Any}(:id => id, :petitioner => vm.current_sender, :text => get(args, :text, ""), :status => :pending)
-        return Dict("prayer" => id, "status" => "pending", "success" => true)
+        isempty(id) && return Dict("error" => "invocation id required", "success" => false)
+        haskey(vm.invocations, id) && return Dict("error" => "invocation already exists: $id", "success" => false)
+        vm.invocations[id] = Dict{Symbol, Any}(:id => id, :petitioner => vm.current_sender, :text => get(args, :text, ""), :status => :pending)
+        return Dict("invocation" => id, "status" => "pending", "success" => true)
 
-    elseif opcode == 0x63  # OFFERING -- donation, requires an existing shrine
-        id = get(args, :id, "offering-$(length(vm.offerings) + 1)")
+    elseif opcode == 0x63  # TRIBUTE -- contribution, requires an existing shrine
+        id = get(args, :id, "tribute-$(length(vm.tributes) + 1)")
         shrine_id = get(args, :shrine_id, "")
-        haskey(vm.shrines, shrine_id) || return Dict("error" => "unknown shrine: $shrine_id", "success" => false)
+        haskey(vm.sanctums, shrine_id) || return Dict("error" => "unknown sanctum: $shrine_id", "success" => false)
         amount = Float64(get(args, :amount, 0.0))
-        amount <= 0.0 && return Dict("error" => "offering amount must be positive", "success" => false)
-        vm.offerings[id] = Dict{Symbol, Any}(:id => id, :donor => vm.current_sender, :shrine_id => shrine_id, :amount => amount)
-        return Dict("offering" => id, "amount" => amount, "success" => true)
+        amount <= 0.0 && return Dict("error" => "tribute amount must be positive", "success" => false)
+        vm.tributes[id] = Dict{Symbol, Any}(:id => id, :donor => vm.current_sender, :shrine_id => shrine_id, :amount => amount)
+        return Dict("tribute" => id, "amount" => amount, "success" => true)
 
-    elseif opcode == 0x64  # BLESSING -- divine favor, only a priest may grant
-        id = get(args, :id, "blessing-$(length(vm.blessings) + 1)")
+    elseif opcode == 0x64  # ATTUNEMENT -- harmonic alignment, only a priest may grant
+        id = get(args, :id, "attunement-$(length(vm.attunements) + 1)")
         grantor = get(args, :grantor, vm.current_sender)
-        haskey(vm.priests, grantor) || return Dict("error" => "only a priest may bless: $grantor", "success" => false)
+        haskey(vm.keepers, grantor) || return Dict("error" => "only a keeper may bless: $grantor", "success" => false)
         target = get(args, :target, "")
-        isempty(target) && return Dict("error" => "blessing target required", "success" => false)
-        vm.blessings[id] = Dict{Symbol, Any}(:id => id, :target => target, :grantor => grantor)
-        return Dict("blessing" => id, "target" => target, "success" => true)
+        isempty(target) && return Dict("error" => "attunement target required", "success" => false)
+        vm.attunements[id] = Dict{Symbol, Any}(:id => id, :target => target, :grantor => grantor)
+        return Dict("attunement" => id, "target" => target, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0x60-0x64", "success" => false)
     end
 end
 
-function handle_church_2(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0x65  # CURSE -- spiritual penalty
-        id = get(args, :id, "curse-$(length(vm.curses) + 1)")
+function handle_rite_2(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x65  # BINDING -- constraint
+        id = get(args, :id, "binding-$(length(vm.bindings) + 1)")
         target = get(args, :target, "")
-        isempty(target) && return Dict("error" => "curse target required", "success" => false)
+        isempty(target) && return Dict("error" => "binding target required", "success" => false)
         reason = get(args, :reason, "")
-        isempty(reason) && return Dict("error" => "curse reason required", "success" => false)
-        vm.curses[id] = Dict{Symbol, Any}(:id => id, :target => target, :reason => reason, :active => true)
-        return Dict("curse" => id, "target" => target, "success" => true)
+        isempty(reason) && return Dict("error" => "binding reason required", "success" => false)
+        vm.bindings[id] = Dict{Symbol, Any}(:id => id, :target => target, :reason => reason, :active => true)
+        return Dict("binding" => id, "target" => target, "success" => true)
 
     elseif opcode == 0x66  # PROPHET -- recognize an oracle, final_signer only
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "prophet name required", "success" => false)
+        isempty(name) && return Dict("error" => "seer name required", "success" => false)
         vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may recognize a prophet", "success" => false)
-        get(vm.prophets, name, false) && return Dict("error" => "already a recognized prophet: $name", "success" => false)
-        vm.prophets[name] = true
-        return Dict("prophet" => name, "success" => true)
+        get(vm.seers, name, false) && return Dict("error" => "already a recognized prophet: $name", "success" => false)
+        vm.seers[name] = true
+        return Dict("seer" => name, "success" => true)
 
-    elseif opcode == 0x67  # PRIEST -- ordain, requires the candidate was first an acolyte
+    elseif opcode == 0x67  # KEEPER -- ordain, requires the candidate was first an acolyte
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "priest name required", "success" => false)
-        haskey(vm.priests, name) && return Dict("error" => "already a priest: $name", "success" => false)
-        haskey(vm.acolytes, name) || return Dict("error" => "must first be an acolyte: $name", "success" => false)
-        get(vm.excommunicated, name, false) && return Dict("error" => "excommunicated, cannot ordain: $name", "success" => false)
-        delete!(vm.acolytes, name)
-        vm.priests[name] = vm.current_sender
-        return Dict("priest" => name, "ordained_by" => vm.current_sender, "success" => true)
+        isempty(name) && return Dict("error" => "keeper name required", "success" => false)
+        haskey(vm.keepers, name) && return Dict("error" => "already a keeper: $name", "success" => false)
+        haskey(vm.aspirants, name) || return Dict("error" => "must first be an aspirant: $name", "success" => false)
+        get(vm.banished, name, false) && return Dict("error" => "banished, cannot ordain: $name", "success" => false)
+        delete!(vm.aspirants, name)
+        vm.keepers[name] = vm.current_sender
+        return Dict("keeper" => name, "ordained_by" => vm.current_sender, "success" => true)
 
-    elseif opcode == 0x68  # ACOLYTE -- initiate, mentor must be a priest
+    elseif opcode == 0x68  # ASPIRANT -- seeker, mentor must be a priest
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "acolyte name required", "success" => false)
-        haskey(vm.acolytes, name) && return Dict("error" => "already an acolyte: $name", "success" => false)
+        isempty(name) && return Dict("error" => "aspirant name required", "success" => false)
+        haskey(vm.aspirants, name) && return Dict("error" => "already an aspirant: $name", "success" => false)
         mentor = get(args, :mentor, vm.current_sender)
-        haskey(vm.priests, mentor) || return Dict("error" => "mentor must be a priest: $mentor", "success" => false)
-        vm.acolytes[name] = mentor
-        return Dict("acolyte" => name, "mentor" => mentor, "success" => true)
+        haskey(vm.keepers, mentor) || return Dict("error" => "mentor must be a keeper: $mentor", "success" => false)
+        vm.aspirants[name] = mentor
+        return Dict("aspirant" => name, "mentor" => mentor, "success" => true)
 
-    elseif opcode == 0x69  # SHRINE -- sacred space, keeper must be a priest
+    elseif opcode == 0x69  # SANCTUM -- sacred space, keeper must be a priest
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "shrine id required", "success" => false)
-        haskey(vm.shrines, id) && return Dict("error" => "shrine already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "sanctum id required", "success" => false)
+        haskey(vm.sanctums, id) && return Dict("error" => "sanctum already exists: $id", "success" => false)
         keeper = get(args, :keeper, vm.current_sender)
-        haskey(vm.priests, keeper) || return Dict("error" => "keeper must be a priest: $keeper", "success" => false)
-        vm.shrines[id] = Dict{Symbol, Any}(:id => id, :keeper => keeper, :location => get(args, :location, ""))
-        return Dict("shrine" => id, "success" => true)
+        haskey(vm.keepers, keeper) || return Dict("error" => "keeper must be a keeper: $keeper", "success" => false)
+        vm.sanctums[id] = Dict{Symbol, Any}(:id => id, :keeper => keeper, :location => get(args, :location, ""))
+        return Dict("sanctum" => id, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0x65-0x69", "success" => false)
     end
 end
 
-function handle_church_3(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0x6a  # RELIC -- artifact, requires an existing shrine
+function handle_rite_3(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x6a  # ARTIFACT -- sacred object, requires an existing shrine
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "relic id required", "success" => false)
-        haskey(vm.relics, id) && return Dict("error" => "relic already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "artifact id required", "success" => false)
+        haskey(vm.artifacts, id) && return Dict("error" => "artifact already exists: $id", "success" => false)
         shrine_id = get(args, :shrine_id, "")
-        haskey(vm.shrines, shrine_id) || return Dict("error" => "unknown shrine: $shrine_id", "success" => false)
-        vm.relics[id] = Dict{Symbol, Any}(:id => id, :shrine_id => shrine_id, :name => get(args, :name, ""))
-        return Dict("relic" => id, "success" => true)
+        haskey(vm.sanctums, shrine_id) || return Dict("error" => "unknown sanctum: $shrine_id", "success" => false)
+        vm.artifacts[id] = Dict{Symbol, Any}(:id => id, :shrine_id => shrine_id, :name => get(args, :name, ""))
+        return Dict("artifact" => id, "success" => true)
 
-    elseif opcode == 0x6b  # SCRIPTURE -- canon text
+    elseif opcode == 0x6b  # CODEX -- sacred text text
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "scripture id required", "success" => false)
-        haskey(vm.scriptures, id) && return Dict("error" => "scripture already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "codex id required", "success" => false)
+        haskey(vm.codices, id) && return Dict("error" => "codex already exists: $id", "success" => false)
         text = get(args, :text, "")
-        isempty(text) && return Dict("error" => "scripture text required", "success" => false)
-        vm.scriptures[id] = Dict{Symbol, Any}(:id => id, :text => text, :canonized => false)
-        return Dict("scripture" => id, "success" => true)
+        isempty(text) && return Dict("error" => "codex text required", "success" => false)
+        vm.codices[id] = Dict{Symbol, Any}(:id => id, :text => text, :canonized => false)
+        return Dict("codex" => id, "success" => true)
 
-    elseif opcode == 0x6c  # HERESY -- doctrinal violation, target must be clergy
-        id = get(args, :id, "heresy-$(length(vm.heresies) + 1)")
+    elseif opcode == 0x6c  # TRANSGRESSION -- protocol violation, target must be clergy
+        id = get(args, :id, "transgression-$(length(vm.transgressions) + 1)")
         accused = get(args, :accused, "")
-        (haskey(vm.priests, accused) || haskey(vm.acolytes, accused)) ||
+        (haskey(vm.keepers, accused) || haskey(vm.aspirants, accused)) ||
             return Dict("error" => "accused must be clergy: $accused", "success" => false)
         charge = get(args, :charge, "")
-        isempty(charge) && return Dict("error" => "heresy charge required", "success" => false)
-        vm.heresies[id] = Dict{Symbol, Any}(:id => id, :accused => accused, :charge => charge, :status => :open)
-        return Dict("heresy" => id, "success" => true)
+        isempty(charge) && return Dict("error" => "transgression charge required", "success" => false)
+        vm.transgressions[id] = Dict{Symbol, Any}(:id => id, :accused => accused, :charge => charge, :status => :open)
+        return Dict("transgression" => id, "success" => true)
 
-    elseif opcode == 0x6d  # EXCOMMUNICATE -- expel, requires an open heresy charge, final_signer only
+    elseif opcode == 0x6d  # BANISH -- expel, requires an open heresy charge, final_signer only
         target = get(args, :target, "")
-        isempty(target) && return Dict("error" => "excommunicate target required", "success" => false)
-        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may excommunicate", "success" => false)
+        isempty(target) && return Dict("error" => "banish target required", "success" => false)
+        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may banish", "success" => false)
         heresy_id = get(args, :heresy_id, "")
-        haskey(vm.heresies, heresy_id) && vm.heresies[heresy_id][:accused] == target && vm.heresies[heresy_id][:status] == :open ||
-            return Dict("error" => "requires an open heresy charge against target", "success" => false)
-        vm.heresies[heresy_id][:status] = :resolved
-        delete!(vm.priests, target)
-        delete!(vm.acolytes, target)
-        vm.excommunicated[target] = true
-        return Dict("excommunicated" => target, "success" => true)
+        haskey(vm.transgressions, heresy_id) && vm.transgressions[heresy_id][:accused] == target && vm.transgressions[heresy_id][:status] == :open ||
+            return Dict("error" => "requires an open transgression charge against target", "success" => false)
+        vm.transgressions[heresy_id][:status] = :resolved
+        delete!(vm.keepers, target)
+        delete!(vm.aspirants, target)
+        vm.banished[target] = true
+        return Dict("banished" => target, "success" => true)
 
-    elseif opcode == 0x6e  # CANONIZE -- declare saint, final_signer only, not excommunicated
+    elseif opcode == 0x6e  # ENSHRINE -- elevate to honored, final_signer only, not excommunicated
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "canonize name required", "success" => false)
-        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may canonize", "success" => false)
-        get(vm.excommunicated, name, false) && return Dict("error" => "excommunicated, cannot canonize: $name", "success" => false)
-        get(vm.canonized, name, false) && return Dict("error" => "already canonized: $name", "success" => false)
-        vm.canonized[name] = true
-        return Dict("canonized" => name, "success" => true)
+        isempty(name) && return Dict("error" => "enshrine name required", "success" => false)
+        vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may enshrine", "success" => false)
+        get(vm.banished, name, false) && return Dict("error" => "banished, cannot enshrine: $name", "success" => false)
+        get(vm.enshrined, name, false) && return Dict("error" => "already canonized: $name", "success" => false)
+        vm.enshrined[name] = true
+        return Dict("enshrined" => name, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0x6a-0x6e", "success" => false)
     end
 end
 
-function handle_church_4(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0x6f  # MIRACLE -- divine event, requires a witness
-        id = get(args, :id, "miracle-$(length(vm.miracles) + 1)")
+function handle_rite_4(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x6f  # MANIFESTATION -- spontaneous emergence, requires a witness
+        id = get(args, :id, "manifestation-$(length(vm.manifestations) + 1)")
         witness = get(args, :witness, "")
-        isempty(witness) && return Dict("error" => "miracle witness required", "success" => false)
-        vm.miracles[id] = Dict{Symbol, Any}(:id => id, :witness => witness, :description => get(args, :description, ""))
-        return Dict("miracle" => id, "success" => true)
+        isempty(witness) && return Dict("error" => "manifestation witness required", "success" => false)
+        vm.manifestations[id] = Dict{Symbol, Any}(:id => id, :witness => witness, :description => get(args, :description, ""))
+        return Dict("manifestation" => id, "success" => true)
 
-    elseif opcode == 0x70  # PILGRIMAGE -- sacred journey, requires an existing shrine
-        id = get(args, :id, "pilgrimage-$(length(vm.pilgrimages) + 1)")
+    elseif opcode == 0x70  # PASSAGE -- threshold crossing, requires an existing shrine
+        id = get(args, :id, "passage-$(length(vm.passages) + 1)")
         shrine_id = get(args, :shrine_id, "")
-        haskey(vm.shrines, shrine_id) || return Dict("error" => "unknown shrine: $shrine_id", "success" => false)
-        vm.pilgrimages[id] = Dict{Symbol, Any}(:id => id, :pilgrim => vm.current_sender, :shrine_id => shrine_id, :status => :underway)
-        return Dict("pilgrimage" => id, "success" => true)
+        haskey(vm.sanctums, shrine_id) || return Dict("error" => "unknown sanctum: $shrine_id", "success" => false)
+        vm.passages[id] = Dict{Symbol, Any}(:id => id, :pilgrim => vm.current_sender, :shrine_id => shrine_id, :status => :underway)
+        return Dict("passage" => id, "success" => true)
 
-    elseif opcode == 0x71  # FAST -- ritual abstinence, end must be after start
+    elseif opcode == 0x71  # VIGIL -- watchful stillness, end must be after start
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "fast id required", "success" => false)
-        haskey(vm.fasts, id) && return Dict("error" => "fast already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "vigil id required", "success" => false)
+        haskey(vm.vigils, id) && return Dict("error" => "vigil already exists: $id", "success" => false)
         start_t = get(args, :start, 0); end_t = get(args, :end, 0)
-        end_t <= start_t && return Dict("error" => "fast end must be after start", "success" => false)
-        vm.fasts[id] = Dict{Symbol, Any}(:id => id, :practitioner => vm.current_sender, :start => start_t, :end => end_t)
-        return Dict("fast" => id, "success" => true)
+        end_t <= start_t && return Dict("error" => "vigil end must be after start", "success" => false)
+        vm.vigils[id] = Dict{Symbol, Any}(:id => id, :practitioner => vm.current_sender, :start => start_t, :end => end_t)
+        return Dict("vigil" => id, "success" => true)
 
-    elseif opcode == 0x72  # FEAST -- celebration
+    elseif opcode == 0x72  # CONVOCATION -- ritual gathering
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "feast id required", "success" => false)
-        haskey(vm.feasts, id) && return Dict("error" => "feast already exists: $id", "success" => false)
-        vm.feasts[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :date => get(args, :date, 0))
-        return Dict("feast" => id, "success" => true)
+        isempty(id) && return Dict("error" => "convocation id required", "success" => false)
+        haskey(vm.convocations, id) && return Dict("error" => "convocation already exists: $id", "success" => false)
+        vm.convocations[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :date => get(args, :date, 0))
+        return Dict("convocation" => id, "success" => true)
 
-    elseif opcode == 0x73  # BAPTISM -- initiation, cannot double-baptize
+    elseif opcode == 0x73  # CONSECRATION -- making sacred, cannot double-baptize
         name = get(args, :name, vm.current_sender)
-        get(vm.baptized, name, false) && return Dict("error" => "already baptized: $name", "success" => false)
-        vm.baptized[name] = true
-        return Dict("baptized" => name, "success" => true)
+        get(vm.consecrated, name, false) && return Dict("error" => "already consecrated: $name", "success" => false)
+        vm.consecrated[name] = true
+        return Dict("consecrated" => name, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0x6f-0x73", "success" => false)
     end
 end
 
-function handle_church_5(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0x74  # COMMUNION -- sacred meal, participant must be baptized, priest must exist
-        id = get(args, :id, "communion-$(length(vm.communions) + 1)")
+function handle_rite_5(vm::VMState, opcode::UInt8, args)::Any
+    if opcode == 0x74  # RESONANCE -- harmonic joining, participant must be consecrated, keeper must exist
+        id = get(args, :id, "resonance-$(length(vm.resonances) + 1)")
         participant = get(args, :participant, vm.current_sender)
-        get(vm.baptized, participant, false) || return Dict("error" => "participant must be baptized: $participant", "success" => false)
-        priest = get(args, :priest, "")
-        haskey(vm.priests, priest) || return Dict("error" => "unknown priest: $priest", "success" => false)
-        vm.communions[id] = Dict{Symbol, Any}(:id => id, :participant => participant, :priest => priest)
-        return Dict("communion" => id, "success" => true)
+        get(vm.consecrated, participant, false) || return Dict("error" => "participant must be consecrated: $participant", "success" => false)
+        keeper = get(args, :keeper, "")
+        haskey(vm.keepers, keeper) || return Dict("error" => "unknown keeper: $keeper", "success" => false)
+        vm.resonances[id] = Dict{Symbol, Any}(:id => id, :participant => participant, :keeper => keeper)
+        return Dict("resonance" => id, "success" => true)
 
-    elseif opcode == 0x75  # CONFESSION -- admission, priest must exist
+    elseif opcode == 0x75  # DISCLOSURE -- transparent acknowledgment, keeper must exist
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "confession id required", "success" => false)
-        haskey(vm.confessions, id) && return Dict("error" => "confession already exists: $id", "success" => false)
-        priest = get(args, :priest, "")
-        haskey(vm.priests, priest) || return Dict("error" => "unknown priest: $priest", "success" => false)
-        vm.confessions[id] = Dict{Symbol, Any}(:id => id, :confessor => vm.current_sender, :priest => priest, :sin => get(args, :sin, ""), :absolved => false)
-        return Dict("confession" => id, "success" => true)
+        isempty(id) && return Dict("error" => "disclosure id required", "success" => false)
+        haskey(vm.disclosures, id) && return Dict("error" => "disclosure already exists: $id", "success" => false)
+        keeper = get(args, :keeper, "")
+        haskey(vm.keepers, keeper) || return Dict("error" => "unknown keeper: $keeper", "success" => false)
+        vm.disclosures[id] = Dict{Symbol, Any}(:id => id, :confessor => vm.current_sender, :keeper => keeper, :sin => get(args, :sin, ""), :released => false)
+        return Dict("disclosure" => id, "success" => true)
 
-    elseif opcode == 0x76  # PENANCE -- atonement act, requires an existing unabsolved confession
-        id = get(args, :id, "penance-$(length(vm.penances) + 1)")
+    elseif opcode == 0x76  # ATONEMENT -- reparative act, requires an existing unabsolved confession
+        id = get(args, :id, "atonement-$(length(vm.atonements) + 1)")
         confession_id = get(args, :confession_id, "")
-        haskey(vm.confessions, confession_id) || return Dict("error" => "unknown confession: $confession_id", "success" => false)
-        vm.confessions[confession_id][:absolved] && return Dict("error" => "confession already absolved: $confession_id", "success" => false)
+        haskey(vm.disclosures, confession_id) || return Dict("error" => "unknown disclosure: $confession_id", "success" => false)
+        vm.disclosures[confession_id][:released] && return Dict("error" => "disclosure already released: $confession_id", "success" => false)
         act = get(args, :act, "")
-        isempty(act) && return Dict("error" => "penance act required", "success" => false)
-        vm.penances[id] = Dict{Symbol, Any}(:id => id, :confession_id => confession_id, :act => act)
-        return Dict("penance" => id, "success" => true)
+        isempty(act) && return Dict("error" => "atonement act required", "success" => false)
+        vm.atonements[id] = Dict{Symbol, Any}(:id => id, :confession_id => confession_id, :act => act)
+        return Dict("atonement" => id, "success" => true)
 
-    elseif opcode == 0x77  # ABSOLUTION -- forgiveness, only the confession's own priest may grant
+    elseif opcode == 0x77  # RELEASE -- unbinding, only the confession's own priest may grant
         confession_id = get(args, :confession_id, "")
-        haskey(vm.confessions, confession_id) || return Dict("error" => "unknown confession: $confession_id", "success" => false)
-        c = vm.confessions[confession_id]
-        c[:absolved] && return Dict("error" => "already absolved: $confession_id", "success" => false)
-        vm.current_sender == c[:priest] || return Dict("error" => "only the confessor's priest may absolve", "success" => false)
-        c[:absolved] = true
-        return Dict("confession" => confession_id, "status" => "absolved", "success" => true)
+        haskey(vm.disclosures, confession_id) || return Dict("error" => "unknown disclosure: $confession_id", "success" => false)
+        c = vm.disclosures[confession_id]
+        c[:released] && return Dict("error" => "already absolved: $confession_id", "success" => false)
+        vm.current_sender == c[:keeper] || return Dict("error" => "only the disclosure's keeper may release", "success" => false)
+        c[:released] = true
+        return Dict("disclosure" => confession_id, "status" => "absolved", "success" => true)
 
-    elseif opcode == 0x78  # RESURRECTION -- rebirth, final_signer only, requires a witness
+    elseif opcode == 0x78  # RENEWAL -- cycle rebirth, final_signer only, requires a witness
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "resurrection id required", "success" => false)
-        haskey(vm.resurrections, id) && return Dict("error" => "resurrection already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "renewal id required", "success" => false)
+        haskey(vm.renewals, id) && return Dict("error" => "renewal already exists: $id", "success" => false)
         vm.current_sender == vm.final_signer || return Dict("error" => "only final_signer may declare a resurrection", "success" => false)
         subject = get(args, :subject, "")
-        isempty(subject) && return Dict("error" => "resurrection subject required", "success" => false)
+        isempty(subject) && return Dict("error" => "renewal subject required", "success" => false)
         witnessed_by = get(args, :witnessed_by, "")
-        isempty(witnessed_by) && return Dict("error" => "resurrection requires a witness", "success" => false)
-        vm.resurrections[id] = Dict{Symbol, Any}(:id => id, :subject => subject, :witnessed_by => witnessed_by)
-        return Dict("resurrection" => id, "success" => true)
+        isempty(witnessed_by) && return Dict("error" => "renewal requires a witness", "success" => false)
+        vm.renewals[id] = Dict{Symbol, Any}(:id => id, :subject => subject, :witnessed_by => witnessed_by)
+        return Dict("renewal" => id, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0x74-0x78", "success" => false)
     end
 end
 
-function handle_church(vm::VMState, opcode::UInt8, args)::Any
+function handle_rite(vm::VMState, opcode::UInt8, args)::Any
     if opcode in 0x60:0x64
-        return handle_church_1(vm, opcode, args)
+        return handle_rite_1(vm, opcode, args)
     elseif opcode in 0x65:0x69
-        return handle_church_2(vm, opcode, args)
+        return handle_rite_2(vm, opcode, args)
     elseif opcode in 0x6a:0x6e
-        return handle_church_3(vm, opcode, args)
+        return handle_rite_3(vm, opcode, args)
     elseif opcode in 0x6f:0x73
-        return handle_church_4(vm, opcode, args)
+        return handle_rite_4(vm, opcode, args)
     elseif opcode in 0x74:0x78
-        return handle_church_5(vm, opcode, args)
+        return handle_rite_5(vm, opcode, args)
     end
 end
 
@@ -1380,8 +1496,8 @@ end
 # Òrìṣà Spiritual Layer cluster (real stateful tracking, not decorative).
 # Split into 5 sub-functions of 5 opcodes each from the start (same
 # rationale as Church/Hospital -- giant elseif chains hang julia's codegen
-# on this VPS). Divination lineage (INITIATION -> DIVINER -> BABALAWO/
-# IYALAWO) and the divination chain (IFA_DIVINATION -> ODU -> ESE) are the
+# on this VPS). Divination lineage (INITIATION -> DIVINER -> SAGE/
+# LUMINARY) and the divination chain (IFA_DIVINATION -> ODU -> ESE) are the
 # real invariant chains; the 7 ORISA_* invocation opcodes share one
 # generic dedupe-by-id pattern since they differ only in which òrìṣà.
 function handle_orisa_1(vm::VMState, opcode::UInt8, args)::Any
@@ -1463,10 +1579,10 @@ function handle_orisa_3(vm::VMState, opcode::UInt8, args)::Any
         vm.ancestral_calls[id] = Dict{Symbol, Any}(:id => id, :caller => vm.current_sender, :lineage => lineage)
         return Dict("ancestral_call" => id, "success" => true)
 
-    elseif opcode == 0xae  # LIBATION -- pour honor, requires an existing ancestor spirit (EGUN)
+    elseif opcode == 0xae  # LIBATION -- pour honor, requires an existing ancestor (ANCESTOR)
         id = get(args, :id, "libation-$(length(vm.libations) + 1)")
         egun_id = get(args, :egun_id, "")
-        haskey(vm.eguns, egun_id) || return Dict("error" => "unknown ancestor spirit: $egun_id", "success" => false)
+        haskey(vm.ancestors, egun_id) || return Dict("error" => "unknown ancestor: $egun_id", "success" => false)
         vm.libations[id] = Dict{Symbol, Any}(:id => id, :egun_id => egun_id, :pourer => vm.current_sender)
         return Dict("libation" => id, "success" => true)
 
@@ -1490,30 +1606,30 @@ function handle_orisa_4(vm::VMState, opcode::UInt8, args)::Any
         vm.diviners[name] = vm.current_sender
         return Dict("diviner" => name, "success" => true)
 
-    elseif opcode == 0xb1  # BABALAWO -- Ifá priest, requires diviner status
+    elseif opcode == 0xb1  # SAGE -- wisdom keeper, requires diviner status
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "babalawo name required", "success" => false)
+        isempty(name) && return Dict("error" => "sage name required", "success" => false)
         haskey(vm.diviners, name) || return Dict("error" => "must be a diviner first: $name", "success" => false)
-        get(vm.babalawos, name, false) && return Dict("error" => "already a babalawo: $name", "success" => false)
-        vm.babalawos[name] = true
-        return Dict("babalawo" => name, "success" => true)
+        get(vm.sages, name, false) && return Dict("error" => "already a sage: $name", "success" => false)
+        vm.sages[name] = true
+        return Dict("sage" => name, "success" => true)
 
-    elseif opcode == 0xb2  # IYALAWO -- Ifá priestess, requires diviner status
+    elseif opcode == 0xb2  # LUMINARY -- illuminated keeper, requires diviner status
         name = get(args, :name, "")
-        isempty(name) && return Dict("error" => "iyalawo name required", "success" => false)
+        isempty(name) && return Dict("error" => "luminary name required", "success" => false)
         haskey(vm.diviners, name) || return Dict("error" => "must be a diviner first: $name", "success" => false)
-        get(vm.iyalawos, name, false) && return Dict("error" => "already an iyalawo: $name", "success" => false)
-        vm.iyalawos[name] = true
-        return Dict("iyalawo" => name, "success" => true)
+        get(vm.luminaries, name, false) && return Dict("error" => "already a luminary: $name", "success" => false)
+        vm.luminaries[name] = true
+        return Dict("luminary" => name, "success" => true)
 
-    elseif opcode == 0xb3  # ILE -- sacred house
+    elseif opcode == 0xb3  # HAVEN -- sanctuary
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "ile id required", "success" => false)
-        haskey(vm.iles, id) && return Dict("error" => "ile already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "haven id required", "success" => false)
+        haskey(vm.havens, id) && return Dict("error" => "haven already exists: $id", "success" => false)
         keeper = get(args, :keeper, "")
-        isempty(keeper) && return Dict("error" => "ile keeper required", "success" => false)
-        vm.iles[id] = Dict{Symbol, Any}(:id => id, :keeper => keeper)
-        return Dict("ile" => id, "success" => true)
+        isempty(keeper) && return Dict("error" => "haven keeper required", "success" => false)
+        vm.havens[id] = Dict{Symbol, Any}(:id => id, :keeper => keeper)
+        return Dict("haven" => id, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0xaf-0xb3", "success" => false)
@@ -1521,7 +1637,7 @@ function handle_orisa_4(vm::VMState, opcode::UInt8, args)::Any
 end
 
 function handle_orisa_5(vm::VMState, opcode::UInt8, args)::Any
-    if opcode == 0xb4  # EGBE -- spiritual society
+    if opcode == 0xb4  # COLLECTIVE -- spirit assembly
         id = get(args, :id, "")
         isempty(id) && return Dict("error" => "egbe id required", "success" => false)
         haskey(vm.egbes, id) && return Dict("error" => "egbe already exists: $id", "success" => false)
@@ -1537,29 +1653,29 @@ function handle_orisa_5(vm::VMState, opcode::UInt8, args)::Any
         vm.oris[person] = Dict{Symbol, Any}(:person => person, :destiny => get(args, :destiny, ""))
         return Dict("ori" => person, "success" => true)
 
-    elseif opcode == 0xb6  # EGUN -- ancestor spirit
+    elseif opcode == 0xb6  # ANCESTOR -- ancestral presence
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "egun id required", "success" => false)
-        haskey(vm.eguns, id) && return Dict("error" => "egun already exists: $id", "success" => false)
-        vm.eguns[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""))
-        return Dict("egun" => id, "success" => true)
+        isempty(id) && return Dict("error" => "ancestor id required", "success" => false)
+        haskey(vm.ancestors, id) && return Dict("error" => "ancestor already exists: $id", "success" => false)
+        vm.ancestors[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""))
+        return Dict("ancestor" => id, "success" => true)
 
-    elseif opcode == 0xb7  # AJOGUN -- malevolent force occurrence
-        id = get(args, :id, "ajogun-$(length(vm.ajoguns) + 1)")
+    elseif opcode == 0xb7  # ADVERSARY -- disruptive force occurrence
+        id = get(args, :id, "adversary-$(length(vm.adversaries) + 1)")
         harm = get(args, :harm, "")
-        isempty(harm) && return Dict("error" => "ajogun harm description required", "success" => false)
-        vm.ajoguns[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :harm => harm)
-        return Dict("ajogun" => id, "success" => true)
+        isempty(harm) && return Dict("error" => "adversary harm description required", "success" => false)
+        vm.adversaries[id] = Dict{Symbol, Any}(:id => id, :name => get(args, :name, ""), :harm => harm)
+        return Dict("adversary" => id, "success" => true)
 
-    elseif opcode == 0xb8  # IBEJI -- twin spirit, requires two distinct twins
+    elseif opcode == 0xb8  # TWIN -- dual spawn, requires two distinct twins
         id = get(args, :id, "")
-        isempty(id) && return Dict("error" => "ibeji id required", "success" => false)
-        haskey(vm.ibejis, id) && return Dict("error" => "ibeji already exists: $id", "success" => false)
+        isempty(id) && return Dict("error" => "twin id required", "success" => false)
+        haskey(vm.twins, id) && return Dict("error" => "twin already exists: $id", "success" => false)
         twin1 = get(args, :twin1, ""); twin2 = get(args, :twin2, "")
         (isempty(twin1) || isempty(twin2)) && return Dict("error" => "both twins required", "success" => false)
         twin1 == twin2 && return Dict("error" => "twins must be distinct", "success" => false)
-        vm.ibejis[id] = Dict{Symbol, Any}(:id => id, :twin1 => twin1, :twin2 => twin2)
-        return Dict("ibeji" => id, "success" => true)
+        vm.twins[id] = Dict{Symbol, Any}(:id => id, :twin1 => twin1, :twin2 => twin2)
+        return Dict("twin" => id, "success" => true)
 
     else
         return Dict("error" => "unreachable: opcode not in 0xb4-0xb8", "success" => false)
@@ -2639,7 +2755,7 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
     elseif opcode == 0x3a  # COINBASE -- the address that seals/authorizes
         # blocks in this VM's real design is final_signer (used
-        # identically by VETO/CABINET/PARDON/RESURRECTION elsewhere), not
+        # identically by VETO/CABINET/PARDON/RENEWAL elsewhere), not
         # a fabricated miner address.
         return Dict("coinbase" => vm.final_signer, "success" => true)
 
@@ -2805,9 +2921,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     elseif opcode in 0x40:0x53  # Quadrinity Government cluster
         return handle_quadrinity_government(vm, opcode, args)
 
-    # TechGnØŞ.EXE Church cluster (real stateful tracking, not decorative)
-    elseif opcode in 0x60:0x78  # TechGnØŞ.EXE Church cluster
-        return handle_church(vm, opcode, args)
+    # GnosisEX Rite cluster (real stateful tracking, not decorative)
+    elseif opcode in 0x60:0x78  # GnosisEX Rite cluster
+        return handle_rite(vm, opcode, args)
 
     # SimaaS Hospital cluster (real stateful tracking, not decorative)
     elseif opcode in 0x80:0x93  # SimaaS Hospital cluster
