@@ -61,15 +61,15 @@
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 ### Transaction System
-- [ ] **Transaction Structure**
-  - [ ] Sender address
-  - [ ] Receiver address
-  - [ ] Amount (Àṣẹ)
-  - [ ] Nonce
-  - [ ] Gas limit
-  - [ ] Gas price
-  - [ ] Data payload
-  - [ ] Signature
+- [x] **Transaction Structure**
+  - [x] Sender address
+  - [x] Receiver address
+  - [x] Amount (Àṣẹ)
+  - [x] Nonce
+  - [x] Gas limit
+  - [x] Gas price
+  - [x] Data payload
+  - [x] Signature
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 - [ ] **Transaction Validation**
@@ -95,11 +95,11 @@
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 ### Cryptographic Primitives
-- [ ] **SHA-256 Hashing**
-  - [ ] Block hashing
-  - [ ] Transaction hashing
-  - [ ] Merkle root computation
-  - [ ] State root hashing
+- [x] **SHA-256 Hashing**
+  - [x] Block hashing
+  - [x] Transaction hashing
+  - [x] Merkle root computation
+  - [x] State root hashing
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 - [ ] **ECDSA Signatures**
@@ -109,16 +109,16 @@
   - [ ] Signature recovery (public key from signature)
   - Priority: **CRITICAL** | Owner: TBD | ETA: 2 days
 
-- [ ] **Merkle Tree Construction**
-  - [ ] Build tree from transactions
-  - [ ] Verify transaction inclusion
-  - [ ] Merkle proof generation
+- [x] **Merkle Tree Construction**
+  - [x] Build tree from transactions
+  - [x] Verify transaction inclusion
+  - [x] Merkle proof generation
   - Priority: **CRITICAL** | Owner: TBD | ETA: 2 days
 
-- [ ] **Account Nonce Tracking**
-  - [ ] Per-account nonce storage
-  - [ ] Nonce increment on TX
-  - [ ] Nonce validation
+- [x] **Account Nonce Tracking**
+  - [x] Per-account nonce storage
+  - [x] Nonce increment on TX
+  - [x] Nonce validation
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 ### Consensus Mechanism
@@ -480,11 +480,11 @@
   - [ ] Supply tracking
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
-- [ ] **Block Reward Distribution**
-  - [ ] Miner receives reward
-  - [ ] Tithe deduction (3.69%)
-  - [ ] Split distribution
-  - [ ] Account updates
+- [x] **Block Reward Distribution**
+  - [x] Miner receives reward
+  - [x] Tithe deduction (3.69%)
+  - [x] Split distribution
+  - [x] Account updates
   - Priority: **CRITICAL** | Owner: TBD | ETA: 1 day
 
 ### Tithe Distribution
