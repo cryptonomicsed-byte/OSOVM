@@ -2707,853 +2707,1153 @@
     },
     {
       "id": 151,
-      "name": "Veil 151 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Shannon Capacity",
+      "tier": "iot_networks",
+      "description": "Shannon capacity for LoRa link budget at -120 dBm.",
+      "equation": "C = B*log2(1 + S/N)",
+      "category": "IoT Networks",
       "opcode": "0x0197",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccp\u00edn \u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.45
+      }
     },
     {
       "id": 152,
-      "name": "Veil 152 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "CSMA/CA",
+      "tier": "iot_networks",
+      "description": "CSMA/CA simulation for 20-node sensor network. Collision rate < 5%.",
+      "equation": "Carrier sense multiple access with collision avoidance",
+      "category": "IoT Networks",
       "opcode": "0x0198",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00c8t\u00f2 \u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.48
+      }
     },
     {
       "id": 153,
-      "name": "Veil 153 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "TCP Congestion",
+      "tier": "iot_networks",
+      "description": "TCP CUBIC vs BBR throughput simulation on 100 Mbps lossy link.",
+      "equation": "cwnd: exponential start, linear growth, multiplicative decrease",
+      "category": "IoT Networks",
       "opcode": "0x0199",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eb8\u0300r\u1ecd \u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 154,
-      "name": "Veil 154 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "UDP",
+      "tier": "iot_networks",
+      "description": "UDP telemetry stream reliability vs latency tradeoff for drone control.",
+      "equation": "Connectionless datagram protocol",
+      "category": "IoT Networks",
       "opcode": "0x019A",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300 Y\u00edy\u00e1ra",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.4
+      }
     },
     {
       "id": 155,
-      "name": "Veil 155 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "MQTT",
+      "tier": "iot_networks",
+      "description": "MQTT broker simulation for 1000 IoT sensors. Message latency < 10 ms.",
+      "equation": "Message queuing telemetry transport",
+      "category": "IoT Networks",
       "opcode": "0x019B",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccf\u1ecd\u0300r\u1ecd\u0300w\u00e9r\u1ecd\u0300 \u1eb8\u0300r\u1ecd",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.46
+      }
     },
     {
       "id": 156,
-      "name": "Veil 156 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "CoAP",
+      "tier": "iot_networks",
+      "description": "CoAP vs HTTP resource consumption on microcontroller. Memory < 8 KB.",
+      "equation": "Constrained application protocol",
+      "category": "IoT Networks",
       "opcode": "0x019C",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccf\u1ecd\u0300r\u1ecd\u0300w\u00e9r\u1ecd\u0300 K\u00e9ker\u00e9",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.47
+      }
     },
     {
       "id": 157,
-      "name": "Veil 157 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "LoRaWAN",
+      "tier": "iot_networks",
+      "description": "LoRaWAN gateway capacity for 500 end-devices. ADR optimisation.",
+      "equation": "Long range wide area network",
+      "category": "IoT Networks",
       "opcode": "0x019D",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300 J\u00edj\u00ecn",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 158,
-      "name": "Veil 158 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Zigbee",
+      "tier": "iot_networks",
+      "description": "Zigbee mesh routing for 50-node factory floor. Coverage simulation.",
+      "equation": "IEEE 802.15.4 mesh networking",
+      "category": "IoT Networks",
       "opcode": "0x019E",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eb8\u0300ka \u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.48
+      }
     },
     {
       "id": 159,
-      "name": "Veil 159 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Bluetooth LE",
+      "tier": "iot_networks",
+      "description": "BLE advertisement scheduling for 10 devices. Scan interval optimisation.",
+      "equation": "Low energy wireless protocol",
+      "category": "IoT Networks",
       "opcode": "0x019F",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eb8\u0300r\u1ecd Agb\u00e1ra K\u00e9ker\u00e9",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.44
+      }
     },
     {
       "id": 160,
-      "name": "Veil 160 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "6LoWPAN",
+      "tier": "iot_networks",
+      "description": "6LoWPAN header compression: overhead reduction on 20-hop mesh.",
+      "equation": "IPv6 over low-power wireless networks",
+      "category": "IoT Networks",
       "opcode": "0x01A0",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "IPv6 K\u00e9ker\u00e9",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 161,
-      "name": "Veil 161 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "RPL",
+      "tier": "iot_networks",
+      "description": "RPL DODAG construction for 100-node sensor network. Stability time.",
+      "equation": "Routing protocol for low-power lossy networks",
+      "category": "IoT Networks",
       "opcode": "0x01A1",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u1eb8\u0300r\u1ecd LLN",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.53
+      }
     },
     {
       "id": 162,
-      "name": "Veil 162 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "AODV",
+      "tier": "iot_networks",
+      "description": "AODV route discovery latency vs network density (10-100 nodes).",
+      "equation": "Ad hoc on-demand distance vector routing",
+      "category": "IoT Networks",
       "opcode": "0x01A2",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u00ccb\u00e9\u00e8r\u00e8",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 163,
-      "name": "Veil 163 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "DSR",
+      "tier": "iot_networks",
+      "description": "DSR vs AODV overhead comparison in mobile robot mesh network.",
+      "equation": "Dynamic source routing",
+      "category": "IoT Networks",
       "opcode": "0x01A3",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 Gb\u00edgb\u00e9",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 164,
-      "name": "Veil 164 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "LEACH",
+      "tier": "iot_networks",
+      "description": "LEACH cluster formation for 200-node agricultural IoT network lifetime.",
+      "equation": "Low-energy adaptive clustering hierarchy",
+      "category": "IoT Networks",
       "opcode": "0x01A4",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eb8\u0300ka Agb\u00e1ra K\u00e9ker\u00e9",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.52
+      }
     },
     {
       "id": 165,
-      "name": "Veil 165 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Gossip Protocol",
+      "tier": "iot_networks",
+      "description": "Gossip protocol convergence for 50-node DePIN witness network.",
+      "equation": "Epidemic information dissemination",
+      "category": "IoT Networks",
       "opcode": "0x01A5",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00cct\u00e0n \u00ccb\u00e1ra\u1eb9nis\u1ecd\u0300r\u1ecd\u0300",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.48
+      }
     },
     {
       "id": 166,
-      "name": "Veil 166 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Byzantine Consensus",
+      "tier": "iot_networks",
+      "description": "BFT consensus for 7-witness PoUS validation. 2-fault tolerance.",
+      "equation": "f-fault tolerant agreement: n >= 3f+1",
+      "category": "IoT Networks",
       "opcode": "0x01A6",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccgb\u1eb9\u0301k\u1eb9\u0300l\u00e9 \u00c0gb\u00e1ye",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.6
+      }
     },
     {
       "id": 167,
-      "name": "Veil 167 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Raft Consensus",
+      "tier": "iot_networks",
+      "description": "Raft leader election: recovery time after node failure < 150 ms.",
+      "equation": "Leader election and log replication",
+      "category": "IoT Networks",
       "opcode": "0x01A7",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccd\u00ecb\u00f2 Ol\u00f3r\u00ed",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.55
+      }
     },
     {
       "id": 168,
-      "name": "Veil 168 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "PBFT",
+      "tier": "iot_networks",
+      "description": "PBFT throughput vs replica count (4, 7, 13 nodes) for sim chain.",
+      "equation": "Practical Byzantine fault tolerance",
+      "category": "IoT Networks",
       "opcode": "0x01A8",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "PBFT \u00c0gb\u00e1ye",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.62
+      }
     },
     {
       "id": 169,
-      "name": "Veil 169 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Bloom Filter",
+      "tier": "iot_networks",
+      "description": "Bloom filter for double-claim detection in PoUS ledger. FPR < 0.1%.",
+      "equation": "Probabilistic set membership",
+      "category": "IoT Networks",
       "opcode": "0x01A9",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00c0l\u1eb9\u0300 \u00ccgb\u00e0gb\u1ecd\u0301",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.45
+      }
     },
     {
       "id": 170,
-      "name": "Veil 170 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Consistent Hashing",
+      "tier": "iot_networks",
+      "description": "Consistent hashing for job distribution across 20 sim worker nodes.",
+      "equation": "Distributed load balancing via ring",
+      "category": "IoT Networks",
       "opcode": "0x01AA",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccgba \u00ccp\u00edn \u00c0k\u00f3k\u00f2",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.48
+      }
     },
     {
       "id": 171,
-      "name": "Veil 171 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "DHT",
+      "tier": "iot_networks",
+      "description": "DHT lookup latency for Veil challenge registry with 1000 entries.",
+      "equation": "Distributed hash table",
+      "category": "IoT Networks",
       "opcode": "0x01AB",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "T\u00e1b\u00ecl\u00ec \u00ccp\u00edn",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 172,
-      "name": "Veil 172 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Chord",
+      "tier": "iot_networks",
+      "description": "Chord ring stabilisation under 20% churn rate in witness network.",
+      "equation": "Peer-to-peer lookup via ring",
+      "category": "IoT Networks",
       "opcode": "0x01AC",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccw\u00e1d\u00ec\u00ed \u1eb8gb\u1eb9\u0301",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.52
+      }
     },
     {
       "id": 173,
-      "name": "Veil 173 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Kademlia",
+      "tier": "iot_networks",
+      "description": "Kademlia routing table refresh for OSOVM proof registry.",
+      "equation": "XOR-based distributed routing",
+      "category": "IoT Networks",
       "opcode": "0x01AD",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 XOR",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.53
+      }
     },
     {
       "id": 174,
-      "name": "Veil 174 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "CAN",
+      "tier": "iot_networks",
+      "description": "CAN geometry for load-balanced simulation job lookup.",
+      "equation": "Content addressable network",
+      "category": "IoT Networks",
       "opcode": "0x01AE",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00c0k\u1ecd\u1ecdl\u1eb9 \u00ccp\u00edn",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 175,
-      "name": "Veil 175 (Tier 6)",
-      "tier": "tier6",
-      "description": "Reserved for Tier 6 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Pastry",
+      "tier": "iot_networks",
+      "description": "Pastry routing for 10000-node PoUS worker network. Hop count analysis.",
+      "equation": "Scalable DHT with proximity routing",
+      "category": "IoT Networks",
       "opcode": "0x01AF",
-      "ffi_language": "Julia",
+      "ffi_language": "Go",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "networking",
+        "distributed",
+        "iot"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u00ccp\u00edn Tuntun",
+        "continent": "\u00ccl\u00fa \u00c0gb\u00e1ye",
+        "difficulty": 0.54
+      }
     },
     {
       "id": 176,
-      "name": "Veil 176 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Linear Programming",
+      "tier": "optimization",
+      "description": "LP for resource allocation across 24 sector wallets. Optimal split.",
+      "equation": "min c^T*x subject to A*x <= b",
+      "category": "Optimization",
       "opcode": "0x01B0",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00ccp\u00ednp\u00edn",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.47
+      }
     },
     {
       "id": 177,
-      "name": "Veil 177 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Quadratic Programming",
+      "tier": "optimization",
+      "description": "QP for MPC trajectory optimisation with joint limit constraints.",
+      "equation": "min 1/2*x^T*Q*x + c^T*x",
+      "category": "Optimization",
       "opcode": "0x01B1",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00ccp\u00ednp\u00edn Meji",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.52
+      }
     },
     {
       "id": 178,
-      "name": "Veil 178 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Simplex Algorithm",
+      "tier": "optimization",
+      "description": "Simplex vs interior-point on 100-variable LP. Iteration count.",
+      "equation": "Vertex traversal on LP feasible polytope",
+      "category": "Optimization",
       "opcode": "0x01B2",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u00cc\u1e63ir\u00f2",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 179,
-      "name": "Veil 179 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Interior Point",
+      "tier": "optimization",
+      "description": "Interior-point for nonlinear trajectory optimisation.",
+      "equation": "Barrier method for constrained optimization",
+      "category": "Optimization",
       "opcode": "0x01B3",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 In\u00fa",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.55
+      }
     },
     {
       "id": 180,
-      "name": "Veil 180 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Genetic Algorithm",
+      "tier": "optimization",
+      "description": "Genetic algorithm for multi-modal swarm formation optimisation.",
+      "equation": "Selection, crossover, mutation on population",
+      "category": "Optimization",
       "opcode": "0x01B4",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccd\u00e0gb\u00e0s\u00f3k\u00e8 \u00c0\u1e63\u00e0",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.53
+      }
     },
     {
       "id": 181,
-      "name": "Veil 181 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Particle Swarm",
+      "tier": "optimization",
+      "description": "PSO for hyperparameter tuning of PoUS reward function.",
+      "equation": "v_i = w*v_i + c1*r1*(p_best-x_i) + c2*r2*(g_best-x_i)",
+      "category": "Optimization",
       "opcode": "0x01B5",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eccg\u1ecd \u00c0\u1e63\u00e0",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.52
+      }
     },
     {
       "id": 182,
-      "name": "Veil 182 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Simulated Annealing",
+      "tier": "optimization",
+      "description": "SA for Veil challenge parameter search. Global optimum probability.",
+      "equation": "P(accept) = exp(-dE/T)",
+      "category": "Optimization",
       "opcode": "0x01B6",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccgb\u1eb9nagb\u1eb9na \u00cc\u1e63ir\u00f2",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 183,
-      "name": "Veil 183 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Ant Colony",
+      "tier": "optimization",
+      "description": "ACO for shortest-path routing across 256 Odu tile world grid.",
+      "equation": "Pheromone update: tau_ij += Delta*tau_ij",
+      "category": "Optimization",
       "opcode": "0x01B7",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1eb8\u0300ka \u00c0\u00e1r\u00edn",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.53
+      }
     },
     {
       "id": 184,
-      "name": "Veil 184 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Tabu Search",
+      "tier": "optimization",
+      "description": "Tabu search for job scheduling across PoUS worker nodes.",
+      "equation": "Memory-based local search with forbidden moves",
+      "category": "Optimization",
       "opcode": "0x01B8",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccw\u00e1d\u00ec\u00ed \u00ccr\u00e1nt\u00ed",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.52
+      }
     },
     {
       "id": 185,
-      "name": "Veil 185 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Branch and Bound",
+      "tier": "optimization",
+      "description": "B&B for task assignment to 20 robot nodes. Optimal in < 1 s.",
+      "equation": "Tree search with upper/lower bounds",
+      "category": "Optimization",
       "opcode": "0x01B9",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "Igi \u00c0ti \u00ccw\u1ecd\u0300n",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.56
+      }
     },
     {
       "id": 186,
-      "name": "Veil 186 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Dynamic Programming",
+      "tier": "optimization",
+      "description": "DP for optimal Veil challenge sequence in multi-step agent mission.",
+      "equation": "V(s) = max_a [R(s,a) + gamma*V(s')]",
+      "category": "Optimization",
       "opcode": "0x01BA",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00ccpinnu G\u00edg\u00f9n",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.54
+      }
     },
     {
       "id": 187,
-      "name": "Veil 187 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "A* Search",
+      "tier": "optimization",
+      "description": "A* path planning on 256-tile Odu world grid. Optimal path, < 10 ms.",
+      "equation": "f(n) = g(n) + h(n)",
+      "category": "Optimization",
       "opcode": "0x01BB",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccw\u00e1d\u00ec\u00ed \u00c0\u00e1n\u00fa",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 188,
-      "name": "Veil 188 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Dijkstra",
+      "tier": "optimization",
+      "description": "Dijkstra for multi-robot task allocation in weighted graph.",
+      "equation": "Shortest path via priority queue",
+      "category": "Optimization",
       "opcode": "0x01BC",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u00c0\u00e1r\u00edn K\u00fak\u00far\u00fa",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.46
+      }
     },
     {
       "id": 189,
-      "name": "Veil 189 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "RRT",
+      "tier": "optimization",
+      "description": "RRT for 3D drone path planning in cluttered environment. 30 obstacles.",
+      "equation": "Rapidly-exploring random tree",
+      "category": "Optimization",
       "opcode": "0x01BD",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "Igi \u00ccw\u00e1d\u00ec\u00ed",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.54
+      }
     },
     {
       "id": 190,
-      "name": "Veil 190 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "RRT*",
+      "tier": "optimization",
+      "description": "RRT* asymptotic optimality: cost convergence over 10000 samples.",
+      "equation": "Asymptotically optimal RRT",
+      "category": "Optimization",
       "opcode": "0x01BE",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "Igi \u00ccw\u00e1d\u00ec\u00ed \u00c0\u00e1n\u00fa",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.57
+      }
     },
     {
       "id": 191,
-      "name": "Veil 191 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "PRM",
+      "tier": "optimization",
+      "description": "PRM for multi-query planning in static factory environment.",
+      "equation": "Probabilistic roadmap for multi-query planning",
+      "category": "Optimization",
       "opcode": "0x01BF",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u1ecc\u0300n\u00e0 \u00c0\u00e1\u00e1r\u1ecd\u0300",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.55
+      }
     },
     {
       "id": 192,
-      "name": "Veil 192 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Potential Fields",
+      "tier": "optimization",
+      "description": "Potential field navigation for drone avoiding 10 dynamic obstacles.",
+      "equation": "F = F_att + F_rep",
+      "category": "Optimization",
       "opcode": "0x01C0",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "Agb\u00e1ra \u1ecc\u0300n\u00e0",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.5
+      }
     },
     {
       "id": 193,
-      "name": "Veil 193 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "MPC Planning",
+      "tier": "optimization",
+      "description": "MPC for autonomous vehicle lane change. 5-step horizon, 100 ms.",
+      "equation": "Receding horizon optimal control",
+      "category": "Optimization",
       "opcode": "0x01C1",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccpinnu As\u1ecdt\u1eb9l\u1eb9",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.58
+      }
     },
     {
       "id": 194,
-      "name": "Veil 194 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Nonlinear Programming",
+      "tier": "optimization",
+      "description": "NLP with KKT for minimum-time trajectory under energy constraint.",
+      "equation": "KKT: grad_f = lambda*grad_g",
+      "category": "Optimization",
       "opcode": "0x01C2",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00ccp\u00ednp\u00edn \u00c0\u00ecgb\u1ecd\u0300k\u00e0n",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.6
+      }
     },
     {
       "id": 195,
-      "name": "Veil 195 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Convex Optimization",
+      "tier": "optimization",
+      "description": "Convex reformulation of non-convex drone path problem via S-procedure.",
+      "equation": "min f(x) s.t. g_i(x)<=0, convex f",
+      "category": "Optimization",
       "opcode": "0x01C3",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 T\u00f3 D\u00e1ra",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.58
+      }
     },
     {
       "id": 196,
-      "name": "Veil 196 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "SDP",
+      "tier": "optimization",
+      "description": "SDP for LMI stability conditions in robust controller design.",
+      "equation": "min c^T*x s.t. F0 + sum(x_i*F_i) >= 0",
+      "category": "Optimization",
       "opcode": "0x01C4",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00ccgb\u1ecd\u0300k\u00e0n",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.62
+      }
     },
     {
       "id": 197,
-      "name": "Veil 197 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "SOCP",
+      "tier": "optimization",
+      "description": "SOCP for minimum-fuel rocket landing trajectory.",
+      "equation": "min ||Ax+b||_2 s.t. c^T*x + d >= 0",
+      "category": "Optimization",
       "opcode": "0x01C5",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccp\u00ednp\u00edn \u1ecc\u0300n\u00e0 Keji",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.61
+      }
     },
     {
       "id": 198,
-      "name": "Veil 198 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Robust Optimization",
+      "tier": "optimization",
+      "description": "Robust LP for PoUS reward under uncertain simulation quality.",
+      "equation": "min max_{u in U} f(x,u)",
+      "category": "Optimization",
       "opcode": "0x01C6",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccd\u00far\u00f3\u1e63in\u1e63in \u00ccp\u00ednp\u00edn",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.58
+      }
     },
     {
       "id": 199,
-      "name": "Veil 199 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Stochastic Programming",
+      "tier": "optimization",
+      "description": "Two-stage stochastic program for job allocation under worker dropout.",
+      "equation": "min E_xi[f(x,xi)] s.t. g(x,xi)<=0",
+      "category": "Optimization",
       "opcode": "0x01C7",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccm\u1ecd\u0300 \u00c0\u00ecd\u00e1nil\u00f3j\u00fa",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.6
+      }
     },
     {
       "id": 200,
-      "name": "Veil 200 (Tier 7)",
-      "tier": "tier7",
-      "description": "Reserved for Tier 7 expansion",
-      "equation": "TBD",
-      "category": "Reserved",
+      "name": "Multi-objective Optimization",
+      "tier": "optimization",
+      "description": "Pareto front for F1-score vs computational cost across Veil challenges.",
+      "equation": "Pareto front: min [f1(x), f2(x), ...]",
+      "category": "Optimization",
       "opcode": "0x01C8",
       "ffi_language": "Julia",
       "parameters": [],
       "outputs": [],
       "tags": [
-        "reserved"
+        "optimization",
+        "planning",
+        "math"
       ],
       "references": [],
-      "sacred_mapping": {}
+      "sacred_mapping": {
+        "yoruba_name": "\u00ccp\u00ednp\u00edn Oj\u00fa Pup\u1ecd",
+        "continent": "\u1ecc\u0300n\u00e0 \u00c0\u00e1n\u00fa",
+        "difficulty": 0.62
+      }
     },
     {
       "id": 201,
