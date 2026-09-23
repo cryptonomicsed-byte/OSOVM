@@ -282,6 +282,185 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TOC ALLOWLIST + GPU CONTRIBUTION HANDLERS  (H-7 / E-17)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# In-memory allowlist: empty set = open (all eligible).
+# Populate at startup via OSOVM_ALLOWLIST env var (comma-separated provider IDs)
+# or leave blank to keep the list open for development/testing.
+const TOC_ALLOWLIST = Set{String}(
+    filter(!isempty, split(get(ENV, "OSOVM_ALLOWLIST", ""), ","))
+)
+
+"""
+POST /api/toc/allowlist/check
+Body: { provider_id, gpu_seconds, zangbeto_anchor? }
+
+Called by UCX mint_allowlist.rs:check_mint_eligible() before minting Synapse.
+Returns 200 { eligible: true }  when the provider passes the allowlist gate.
+Returns 403 { eligible: false } when the provider is explicitly blocked.
+Open list (TOC_ALLOWLIST empty) ⇒ all providers are eligible.
+"""
+function handle_toc_allowlist_check(req::HTTP.Request)::HTTP.Response
+    local body_obj
+    try
+        body_obj = JSON3.read(req.body)
+    catch e
+        return bad_request("invalid JSON body: $(e)")
+    end
+
+    provider_id      = string(get(body_obj, :provider_id, ""))
+    gpu_seconds      = Float64(get(body_obj, :gpu_seconds, 0.0))
+    zangbeto_anchor  = get(body_obj, :zangbeto_anchor, nothing)
+
+    isempty(provider_id) && return bad_request("missing field: provider_id")
+
+    # Basic eligibility: must have actual GPU work and a settlement anchor.
+    if gpu_seconds <= 0.0
+        body = JSON3.write(Dict{String,Any}(
+            "eligible" => false,
+            "reason"   => "gpu_seconds must be > 0",
+        ))
+        return HTTP.Response(403, ["Content-Type" => "application/json"], body)
+    end
+
+    if zangbeto_anchor === nothing || isempty(string(zangbeto_anchor))
+        body = JSON3.write(Dict{String,Any}(
+            "eligible" => false,
+            "reason"   => "missing zangbeto_anchor — settlement not confirmed",
+        ))
+        return HTTP.Response(403, ["Content-Type" => "application/json"], body)
+    end
+
+    # Allowlist gate: open list passes everyone; closed list requires membership.
+    if !isempty(TOC_ALLOWLIST) && !(provider_id in TOC_ALLOWLIST)
+        @info "TOC allowlist: provider not on list" provider_id=provider_id
+        body = JSON3.write(Dict{String,Any}(
+            "eligible" => false,
+            "reason"   => "provider not on TOC allowlist",
+        ))
+        return HTTP.Response(403, ["Content-Type" => "application/json"], body)
+    end
+
+    @info "TOC allowlist: provider eligible" provider_id=provider_id gpu_seconds=gpu_seconds
+    return json_ok(Dict{String,Any}("eligible" => true, "reason" => "ok"))
+end
+
+"""
+POST /api/osovm/gpu_contribution
+Body: { provider_id, submitter_id, job_id, gpu_seconds, zangbeto_anchor?, timestamp }
+
+Records a verified GPU compute contribution in the agent's VM state and fires
+the event-bridge sidecar (GPU_CONTRIBUTION → Vantage Dopamine mint).
+Returns { recorded: true, event_id: "..." }.
+"""
+function handle_gpu_contribution(req::HTTP.Request)::HTTP.Response
+    local body_obj
+    try
+        body_obj = JSON3.read(req.body)
+    catch e
+        return bad_request("invalid JSON body: $(e)")
+    end
+
+    provider_id     = string(get(body_obj, :provider_id, ""))
+    submitter_id    = string(get(body_obj, :submitter_id, ""))
+    job_id          = string(get(body_obj, :job_id, ""))
+    gpu_seconds     = Float64(get(body_obj, :gpu_seconds, 0.0))
+    zangbeto_anchor = string(get(body_obj, :zangbeto_anchor, ""))
+    timestamp       = Int(get(body_obj, :timestamp, 0))
+
+    isempty(provider_id)  && return bad_request("missing field: provider_id")
+    isempty(submitter_id) && return bad_request("missing field: submitter_id")
+    isempty(job_id)       && return bad_request("missing field: job_id")
+    gpu_seconds <= 0.0    && return bad_request("gpu_seconds must be > 0")
+
+    # Record the contribution in ResourceMeter so it feeds the TOC_MINT cycle.
+    ResourceMeter.record_contribution(submitter_id, gpu_seconds, job_id)
+
+    event_id = "gpu_contrib:" * string(UUIDs.uuid4())
+    @info "GPU contribution recorded" provider_id=provider_id submitter_id=submitter_id job_id=job_id gpu_seconds=gpu_seconds event_id=event_id
+
+    # ── Fire-and-forget: call event-bridge.js via Node.js subprocess ──────────
+    # event-bridge.js routes GPU_CONTRIBUTION → Vantage Dopamine mint.
+    # Launched async so the HTTP response is not blocked by the sidecar call.
+    event_payload = JSON3.write(Dict{String,Any}(
+        "opcode"     => "GPU_CONTRIBUTION",
+        "agent_id"   => submitter_id,
+        "gpu_seconds" => gpu_seconds,
+        "event_id"   => event_id,
+        "job_id"     => job_id,
+        "provider_id" => provider_id,
+    ))
+
+    bridge_path = joinpath(dirname(dirname(@__FILE__)), "event-bridge.js")
+    if isfile(bridge_path)
+        # Inline Node.js CJS snippet: require the bridge, call handleOsovmEvent, exit.
+        # event-bridge.js uses CommonJS (require/module.exports), so we pass `-e`.
+        node_snippet = "const b=require($(repr(bridge_path)));b.handleOsovmEvent($(event_payload)).catch(()=>{}).finally(()=>process.exit(0));"
+        try
+            @async run(Cmd(`node -e $(node_snippet)`; ignorestatus=true))
+        catch
+            # node unavailable or snippet error — log and continue; fail-open.
+            @warn "event-bridge sidecar call failed (node unavailable or error)" event_id=event_id
+        end
+    else
+        @warn "event-bridge.js not found, skipping sidecar" bridge_path=bridge_path
+    end
+
+    return json_ok(Dict{String,Any}(
+        "recorded"   => true,
+        "event_id"   => event_id,
+        "provider_id" => provider_id,
+        "submitter_id" => submitter_id,
+        "job_id"     => job_id,
+        "gpu_seconds" => gpu_seconds,
+    ))
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /v1/vm  — stateless VM session shim  (H-6 / E-02)
+# rlm-osovm.ts (organism-core) expects a two-step flow:
+#   POST /v1/vm           → { vm_id }
+#   POST /v1/vm/:id/execute → execute result
+# OSOVM is stateless per-request, so we mint a uuid as vm_id and embed it
+# in the execute response; callers can pass it back but we don't need state.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+POST /v1/vm
+Body: { final_signer? }
+Returns { vm_id: "..." } — creates a logical session ID for a multi-step caller.
+"""
+function handle_v1_vm_create(req::HTTP.Request)::HTTP.Response
+    vm_id = "vm:" * string(UUIDs.uuid4())
+    @info "v1/vm: session created" vm_id=vm_id
+    return json_ok(Dict{String,Any}("vm_id" => vm_id, "status" => "created"))
+end
+
+"""
+POST /v1/vm/:id/execute
+Body: { opcode, args?, agent? }
+Executes an opcode on a fresh VM (stateless) and returns the result tagged
+with the vm_id so callers can correlate multi-step flows.
+"""
+function handle_v1_vm_execute(req::HTTP.Request, vm_id::String)::HTTP.Response
+    # Reuse the core /run logic by delegating to handle_run, then patching vm_id.
+    result = handle_run(req)
+    # If the response is 200 OK, inject vm_id into the JSON body.
+    if result.status == 200
+        try
+            parsed = JSON3.read(String(result.body))
+            merged = Dict{String,Any}(string(k) => v for (k, v) in parsed)
+            merged["vm_id"] = vm_id
+            return json_ok(merged)
+        catch
+            # Parsing failed — return original response as-is.
+        end
+    end
+    return result
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UCX RESOURCE ACCOUNTING HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -422,6 +601,28 @@ function router(req::HTTP.Request)::HTTP.Response
         elseif startswith(target, "/ucx/meter/") && method == "GET"
             return handle_ucx_meter_read(req)
 
+        # ── TOC allowlist + GPU contribution  (H-7 / E-17) ───────────────────
+        elseif target == "/api/toc/allowlist/check" && method == "POST"
+            return handle_toc_allowlist_check(req)
+
+        elseif target == "/api/osovm/gpu_contribution" && method == "POST"
+            return handle_gpu_contribution(req)
+
+        # ── v1/vm session shim  (H-6 / E-02) ─────────────────────────────────
+        elseif target == "/v1/vm" && method == "POST"
+            return handle_v1_vm_create(req)
+
+        elseif startswith(target, "/v1/vm/") && endswith(target, "/execute") && method == "POST"
+            # Extract vm_id: /v1/vm/<vm_id>/execute
+            parts = split(target, '/')
+            # parts = ["", "v1", "vm", "<vm_id>", "execute"]
+            vm_id = length(parts) >= 5 ? parts[4] : "unknown"
+            return handle_v1_vm_execute(req, vm_id)
+
+        # ── v1/health alias ───────────────────────────────────────────────────
+        elseif target == "/v1/health" && method == "GET"
+            return handle_health(req)
+
         else
             body = JSON3.write(Dict{String,Any}(
                 "status" => "error",
@@ -445,7 +646,7 @@ end
 
 function start(; port::Int = parse(Int, get(ENV, "OSOVM_PORT", "7780")))
     @info "ỌSỌVM HTTP server starting" port=port
-    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run  POST /ucx/preflight  POST /ucx/settle  GET /ucx/meter/:id"
+    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run  POST /ucx/preflight  POST /ucx/settle  GET /ucx/meter/:id  POST /api/toc/allowlist/check  POST /api/osovm/gpu_contribution  POST /v1/vm  POST /v1/vm/:id/execute"
     HTTP.serve(router, "0.0.0.0", port)
 end
 
