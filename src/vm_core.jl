@@ -651,6 +651,798 @@ function op_toc_decay(state::VMState, args::Dict{Symbol,Any})
 end
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# COMPUTE / VEIL / MEMORY OPCODE HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    op_compute_proof — COMPUTE_PROOF (0x56)
+Validate GPU compute work and authorize Dopamine minting.
+Verifies the compute hash format (64-char hex), records the verified work in
+VM state, and queues a pending Dopamine mint for the UCX→TOC_MINT pipeline.
+Args: :work_id, :compute_hash, :provider_id, :amount
+"""
+function op_compute_proof(state::VMState, args::Dict{Symbol,Any})
+    work_id      = String(get(args, :work_id, ""))
+    compute_hash = String(get(args, :compute_hash, ""))
+    provider_id  = String(get(args, :provider_id, ""))
+    amount       = r6(Float64(get(args, :amount, 0.0)))
+    block_number = Int(get(args, :block_number, 0))
+
+    if isempty(work_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_work_id")
+    end
+    if !occursin(r"^[0-9a-f]{64}$", compute_hash)
+        return state, Dict{Symbol,Any}(:success => false, :error => "invalid_compute_hash_format")
+    end
+    if amount <= 0.0
+        return state, Dict{Symbol,Any}(:success => false, :error => "amount_must_be_positive")
+    end
+
+    s = copy_state(state)
+
+    if !haskey(s.metadata, :verified_compute_work)
+        s.metadata[:verified_compute_work] = Dict{String,Any}()
+    end
+    if !haskey(s.metadata, :pending_dopamine_mints)
+        s.metadata[:pending_dopamine_mints] = Dict{String,Float64}()
+    end
+
+    vcw = s.metadata[:verified_compute_work]::Dict{String,Any}
+    pdm = s.metadata[:pending_dopamine_mints]::Dict{String,Float64}
+
+    vcw[work_id] = Dict{String,Any}(
+        "hash"     => compute_hash,
+        "provider" => provider_id,
+        "amount"   => amount,
+        "block"    => block_number,
+    )
+    pdm[work_id] = amount
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "ComputeProofVerified",
+        :data  => Dict{String,Any}(
+            "work_id"     => work_id,
+            "provider_id" => provider_id,
+            "amount"      => amount,
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success  => true,
+        :work_id  => work_id,
+        :provider => provider_id,
+        :amount   => amount,
+        :opcode   => "COMPUTE_PROOF",
+    )
+end
+
+"""
+    op_veil_grant — VEIL_GRANT (0x57)
+Grant VeilSim capability access to a target agent for a bounded duration.
+Veil levels 0-5 map to simulation capability tiers (organism-core→veilsim).
+Args: :target_agent_id, :veil_level, :duration_secs
+"""
+function op_veil_grant(state::VMState, args::Dict{Symbol,Any})
+    target_id    = String(get(args, :target_agent_id, ""))
+    veil_level   = Int(get(args, :veil_level, 0))
+    duration     = Int(get(args, :duration_secs, 0))
+    block_number = Int(get(args, :block_number, 0))
+    sender       = args[:sender]::String
+
+    if isempty(target_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_target_agent_id")
+    end
+    if !(veil_level in 0:5)
+        return state, Dict{Symbol,Any}(:success => false, :error => "invalid_veil_level_must_be_0_to_5")
+    end
+    if duration <= 0
+        return state, Dict{Symbol,Any}(:success => false, :error => "duration_secs_must_be_positive")
+    end
+
+    s = copy_state(state)
+
+    if !haskey(s.metadata, :veil_grants)
+        s.metadata[:veil_grants] = Dict{String,Any}()
+    end
+
+    vg = s.metadata[:veil_grants]::Dict{String,Any}
+    # ~12 s/block on OSO-MAINNET-1; store both block expiry and raw duration
+    vg[target_id] = Dict{String,Any}(
+        "level"        => veil_level,
+        "expires_block"=> block_number + div(duration, 12),
+        "duration"     => duration,
+        "granted_by"   => sender,
+        "grant_block"  => block_number,
+    )
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "VeilGranted",
+        :data  => Dict{String,Any}(
+            "target_id"  => target_id,
+            "veil_level" => veil_level,
+            "granted_by" => sender,
+            "duration"   => duration,
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success    => true,
+        :target_id  => target_id,
+        :veil_level => veil_level,
+        :duration   => duration,
+        :granted_by => sender,
+        :opcode     => "VEIL_GRANT",
+    )
+end
+
+"""
+    op_memory_write — MEMORY_WRITE (0x58)
+Write a key/value pair into the per-agent VM memory store.
+Non-critical path — fail-open: missing key/value returns an error receipt but
+does NOT halt execution.
+Args: :key, :value, :agent_id (optional, defaults to sender)
+"""
+function op_memory_write(state::VMState, args::Dict{Symbol,Any})
+    sender       = args[:sender]::String
+    key          = String(get(args, :key, ""))
+    value        = get(args, :value, nothing)
+    agent_id     = String(get(args, :agent_id, sender))
+
+    if isempty(key)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_key")
+    end
+    if isnothing(value)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_value")
+    end
+
+    s = copy_state(state)
+
+    if !haskey(s.metadata, :agent_memory)
+        s.metadata[:agent_memory] = Dict{String,Dict{String,Any}}()
+    end
+
+    mem = s.metadata[:agent_memory]::Dict{String,Dict{String,Any}}
+    if !haskey(mem, agent_id)
+        mem[agent_id] = Dict{String,Any}()
+    end
+    mem[agent_id][key] = value
+
+    return s, Dict{Symbol,Any}(
+        :success  => true,
+        :agent_id => agent_id,
+        :key      => key,
+        :written  => true,
+        :opcode   => "MEMORY_WRITE",
+    )
+end
+
+"""
+    op_memory_read — MEMORY_READ (0x59)
+Read a value from the per-agent VM memory store (non-mutating).
+Returns :found => false with :value => nothing when key is absent.
+Args: :key, :agent_id (optional, defaults to sender)
+"""
+function op_memory_read(state::VMState, args::Dict{Symbol,Any})
+    sender   = args[:sender]::String
+    key      = String(get(args, :key, ""))
+    agent_id = String(get(args, :agent_id, sender))
+
+    if isempty(key)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_key")
+    end
+
+    mem = get(state.metadata, :agent_memory, nothing)
+    if isnothing(mem) || !haskey(mem, agent_id) || !haskey(mem[agent_id], key)
+        return state, Dict{Symbol,Any}(
+            :success  => true,
+            :found    => false,
+            :agent_id => agent_id,
+            :key      => key,
+            :value    => nothing,
+            :opcode   => "MEMORY_READ",
+        )
+    end
+
+    return state, Dict{Symbol,Any}(
+        :success  => true,
+        :found    => true,
+        :agent_id => agent_id,
+        :key      => key,
+        :value    => mem[agent_id][key],
+        :opcode   => "MEMORY_READ",
+    )
+end
+
+"""
+    op_emit_event — EMIT_EVENT (0x5a)
+Push a named event into the VM global event queue (state.metadata[:events]).
+Useful for cross-opcode signalling without mutating balances.
+Args: :event_name, :event_data (optional Dict)
+"""
+function op_emit_event(state::VMState, args::Dict{Symbol,Any})
+    sender       = args[:sender]::String
+    event_name   = String(get(args, :event_name, ""))
+    raw_data     = get(args, :event_data, Dict{String,Any}())
+    event_data   = Dict{String,Any}(string(k) => v for (k, v) in raw_data)
+    block_number = Int(get(args, :block_number, 0))
+
+    if isempty(event_name)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_event_name")
+    end
+
+    s = copy_state(state)
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+
+    event_data["sender"] = sender
+    push!(events, Dict{Symbol,Any}(
+        :name  => event_name,
+        :data  => event_data,
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success     => true,
+        :event_name  => event_name,
+        :event_index => length(events) - 1,
+        :opcode      => "EMIT_EVENT",
+    )
+end
+
+"""
+    op_assert_tier — ASSERT_TIER (0x5b)
+Assert that the target agent meets a minimum tier requirement.
+Fail-closed: halts VM execution if gate fails (use before privileged opcodes).
+Agent tiers are stored in state.metadata[:agent_tiers] (String → UInt8).
+Agents not yet registered default to tier 0.
+Args: :required_tier (Int 0-255), :agent_id (optional, defaults to sender)
+"""
+function op_assert_tier(state::VMState, args::Dict{Symbol,Any})
+    sender        = args[:sender]::String
+    required_tier = UInt8(Int(get(args, :required_tier, 0)))
+    agent_id      = String(get(args, :agent_id, sender))
+
+    agent_tiers = get(state.metadata, :agent_tiers, nothing)
+    actual_tier = if !isnothing(agent_tiers) && haskey(agent_tiers, agent_id)
+        UInt8(agent_tiers[agent_id])
+    else
+        UInt8(0)
+    end
+
+    if actual_tier < required_tier
+        s = copy_state(state)
+        s.metadata[:halted] = true
+        return s, Dict{Symbol,Any}(
+            :success       => false,
+            :error         => "tier_gate_failed",
+            :agent_id      => agent_id,
+            :actual_tier   => Int(actual_tier),
+            :required_tier => Int(required_tier),
+            :halted        => true,
+            :opcode        => "ASSERT_TIER",
+        )
+    end
+
+    return state, Dict{Symbol,Any}(
+        :success       => true,
+        :agent_id      => agent_id,
+        :actual_tier   => Int(actual_tier),
+        :required_tier => Int(required_tier),
+        :opcode        => "ASSERT_TIER",
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ECONOMIC OPCODE HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    op_ase_mint — ASE_MINT
+Add ASE to agent_state.ase_balance; record in mint_log.
+Args: :agent_id, :amount, :reason (optional)
+Uses MARKET opcode slot 0xc0.
+"""
+function op_ase_mint(state::VMState, args::Dict{Symbol,Any})
+    agent_id    = String(get(args, :agent_id, args[:sender]::String))
+    amount      = r6(Float64(get(args, :amount, 0.0)))
+    reason      = String(get(args, :reason, "opcode"))
+    block_number = Int(get(args, :block_number, 0))
+
+    if amount <= 0.0
+        return state, Dict{Symbol,Any}(:success => false, :error => "amount must be positive")
+    end
+
+    s = copy_state(state)
+    agent_balances = get!(s.metadata, :ase_agent_balances, Dict{String,Float64}())
+    agent_balances[agent_id] = r6(get(agent_balances, agent_id, 0.0) + amount)
+
+    mint_log = get!(s.metadata, :mint_log, Vector{Dict{String,Any}}())
+    push!(mint_log, Dict{String,Any}(
+        "agent_id" => agent_id,
+        "amount"   => amount,
+        "reason"   => reason,
+        "block"    => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success     => true,
+        :agent_id    => agent_id,
+        :amount      => amount,
+        :new_balance => agent_balances[agent_id],
+        :opcode      => "ASE_MINT",
+    )
+end
+
+"""
+    op_ase_burn — ASE_BURN
+Subtract from ase_balance; error if insufficient.
+Args: :agent_id, :amount, :reason (optional)
+Uses ORDER opcode slot 0xc1.
+"""
+function op_ase_burn(state::VMState, args::Dict{Symbol,Any})
+    agent_id     = String(get(args, :agent_id, args[:sender]::String))
+    amount       = r6(Float64(get(args, :amount, 0.0)))
+    reason       = String(get(args, :reason, "opcode"))
+    block_number = Int(get(args, :block_number, 0))
+
+    if amount <= 0.0
+        return state, Dict{Symbol,Any}(:success => false, :error => "amount must be positive")
+    end
+
+    agent_balances = get(state.metadata, :ase_agent_balances, Dict{String,Float64}())
+    current = get(agent_balances, agent_id, 0.0)
+
+    if current < amount
+        return state, Dict{Symbol,Any}(
+            :success => false,
+            :error   => "insufficient_ase_balance",
+            :required => amount,
+            :balance  => current,
+        )
+    end
+
+    s = copy_state(state)
+    s_balances = get!(s.metadata, :ase_agent_balances, Dict{String,Float64}())
+    s_balances[agent_id] = r6(current - amount)
+
+    burn_log = get!(s.metadata, :burn_log, Vector{Dict{String,Any}}())
+    push!(burn_log, Dict{String,Any}(
+        "agent_id" => agent_id,
+        "amount"   => amount,
+        "reason"   => reason,
+        "block"    => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success     => true,
+        :agent_id    => agent_id,
+        :amount      => amount,
+        :new_balance => s_balances[agent_id],
+        :opcode      => "ASE_BURN",
+    )
+end
+
+"""
+    op_synapse_alloc — SYNAPSE_ALLOC
+Allocate synapse budget from dopamine pool (10:1 conversion).
+Args: :agent_id, :dopamine_amount
+Uses LIQUIDITY opcode slot 0xc2.
+"""
+function op_synapse_alloc(state::VMState, args::Dict{Symbol,Any})
+    agent_id       = String(get(args, :agent_id, args[:sender]::String))
+    dopamine_amount = Int(get(args, :dopamine_amount, 0))
+    block_number   = Int(get(args, :block_number, 0))
+
+    if dopamine_amount <= 0
+        return state, Dict{Symbol,Any}(:success => false, :error => "dopamine_amount must be positive")
+    end
+
+    # 10:1 conversion: 10 Dopamine → 1 Synapse
+    synapse_granted = div(dopamine_amount, 10)
+    if synapse_granted == 0
+        return state, Dict{Symbol,Any}(
+            :success => false,
+            :error   => "insufficient_dopamine_for_synapse",
+            :minimum => 10,
+            :provided => dopamine_amount,
+        )
+    end
+
+    s = copy_state(state)
+    syn_balances = s.metadata[:synapse_balance]::Dict{String,Int}
+    prev_syn = get(syn_balances, agent_id, 0)
+    syn_balances[agent_id] = prev_syn + synapse_granted
+
+    events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
+    push!(events, Dict{Symbol,Any}(
+        :name  => "SynapseAlloc",
+        :data  => Dict{String,Any}(
+            "agent_id"       => agent_id,
+            "dopamine_used"  => dopamine_amount,
+            "synapse_granted"=> synapse_granted,
+            "new_balance"    => syn_balances[agent_id],
+        ),
+        :block => block_number,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success         => true,
+        :agent_id        => agent_id,
+        :dopamine_used   => dopamine_amount,
+        :synapse_granted => synapse_granted,
+        :new_balance     => syn_balances[agent_id],
+        :opcode          => "SYNAPSE_ALLOC",
+    )
+end
+
+"""
+    op_dopamine_check — DOPAMINE_CHECK
+Return current dopamine balance for agent.
+Args: :agent_id
+Uses YIELD opcode slot 0xc4.
+"""
+function op_dopamine_check(state::VMState, args::Dict{Symbol,Any})
+    agent_id = String(get(args, :agent_id, args[:sender]::String))
+    # Dopamine tracked via ToC contributions proxy; check toc_contributions
+    contributions = state.metadata[:toc_contributions]::Dict{String,Float64}
+    syn_balances  = state.metadata[:synapse_balance]::Dict{String,Int}
+
+    dopamine_balance = get(contributions, agent_id, 0.0)
+    synapse_balance  = get(syn_balances, agent_id, 0)
+
+    return state, Dict{Symbol,Any}(
+        :success          => true,
+        :agent_id         => agent_id,
+        :dopamine_balance => dopamine_balance,
+        :synapse_balance  => synapse_balance,
+        :opcode           => "DOPAMINE_CHECK",
+    )
+end
+
+"""
+    op_staking_lock — STAKING_LOCK
+Lock amount in agent_state.staked_amounts for duration_secs.
+Args: :agent_id, :amount, :duration_secs
+Uses BOND opcode slot 0xc5.
+"""
+function op_staking_lock(state::VMState, args::Dict{Symbol,Any})
+    agent_id      = String(get(args, :agent_id, args[:sender]::String))
+    amount        = r6(Float64(get(args, :amount, 0.0)))
+    duration_secs = Int(get(args, :duration_secs, 0))
+    timestamp     = Int(get(args, :timestamp, 0))
+    block_number  = Int(get(args, :block_number, 0))
+
+    if amount <= 0.0
+        return state, Dict{Symbol,Any}(:success => false, :error => "amount must be positive")
+    end
+    if duration_secs <= 0
+        return state, Dict{Symbol,Any}(:success => false, :error => "duration_secs must be positive")
+    end
+
+    # Check agent ASE balance
+    agent_balances = get(state.metadata, :ase_agent_balances, Dict{String,Float64}())
+    current = get(agent_balances, agent_id, 0.0)
+    if current < amount
+        return state, Dict{Symbol,Any}(
+            :success  => false,
+            :error    => "insufficient_ase_to_lock",
+            :required => amount,
+            :balance  => current,
+        )
+    end
+
+    s = copy_state(state)
+    s_balances = get!(s.metadata, :ase_agent_balances, Dict{String,Float64}())
+    s_balances[agent_id] = r6(current - amount)
+
+    staked_amounts = get!(s.metadata, :staked_amounts, Dict{String,Vector{Dict{String,Any}}}())
+    agent_stakes   = get!(staked_amounts, agent_id, Vector{Dict{String,Any}}())
+    push!(agent_stakes, Dict{String,Any}(
+        "amount"       => amount,
+        "locked_at"    => timestamp,
+        "unlock_at"    => timestamp + duration_secs,
+        "duration_secs"=> duration_secs,
+        "block"        => block_number,
+    ))
+    staked_amounts[agent_id] = agent_stakes
+
+    return s, Dict{Symbol,Any}(
+        :success      => true,
+        :agent_id     => agent_id,
+        :amount       => amount,
+        :duration_secs=> duration_secs,
+        :unlock_at    => timestamp + duration_secs,
+        :new_balance  => s_balances[agent_id],
+        :opcode       => "STAKING_LOCK",
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GOVERNANCE OPCODE HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    op_council_vote — COUNCIL_VOTE
+Record vote in agent_state.council_votes[proposal_id].
+Args: :proposal_id, :vote (:yes/:no/:abstain), :agent_id (optional)
+Uses VOTE opcode slot 0x41.
+"""
+function op_council_vote(state::VMState, args::Dict{Symbol,Any})
+    sender      = args[:sender]::String
+    proposal_id = String(get(args, :proposal_id, ""))
+    vote        = Symbol(get(args, :vote, :abstain))
+    agent_id    = String(get(args, :agent_id, sender))
+    block_number = Int(get(args, :block_number, 0))
+    timestamp   = Int(get(args, :timestamp, 0))
+
+    if isempty(proposal_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_proposal_id")
+    end
+    if !(vote in [:yes, :no, :abstain])
+        return state, Dict{Symbol,Any}(:success => false, :error => "invalid_vote_value", :valid => [:yes, :no, :abstain])
+    end
+
+    s = copy_state(state)
+    council_votes = get!(s.metadata, :council_votes, Dict{String,Dict{String,Any}}())
+    proposal_votes = get!(council_votes, proposal_id, Dict{String,Any}())
+    proposal_votes[agent_id] = Dict{String,Any}(
+        "vote"   => string(vote),
+        "block"  => block_number,
+        "at"     => timestamp,
+    )
+    council_votes[proposal_id] = proposal_votes
+
+    return s, Dict{Symbol,Any}(
+        :success     => true,
+        :proposal_id => proposal_id,
+        :agent_id    => agent_id,
+        :vote        => string(vote),
+        :opcode      => "COUNCIL_VOTE",
+    )
+end
+
+"""
+    op_proposal_create — PROPOSAL_CREATE
+Create proposal dict in agent_state.proposals.
+Args: :proposal_id, :title, :body, :proposer (optional)
+Uses PROPOSAL opcode slot 0x40.
+"""
+function op_proposal_create(state::VMState, args::Dict{Symbol,Any})
+    sender      = args[:sender]::String
+    proposal_id = String(get(args, :proposal_id, ""))
+    title       = String(get(args, :title, ""))
+    body        = String(get(args, :body, ""))
+    proposer    = String(get(args, :proposer, sender))
+    block_number = Int(get(args, :block_number, 0))
+    timestamp   = Int(get(args, :timestamp, 0))
+
+    if isempty(proposal_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_proposal_id")
+    end
+    if isempty(title)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_title")
+    end
+
+    proposals = get(state.metadata, :proposals, Dict{String,Dict{String,Any}}())
+    if haskey(proposals, proposal_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "proposal_already_exists", :proposal_id => proposal_id)
+    end
+
+    s = copy_state(state)
+    s_proposals = get!(s.metadata, :proposals, Dict{String,Dict{String,Any}}())
+    s_proposals[proposal_id] = Dict{String,Any}(
+        "proposal_id" => proposal_id,
+        "title"       => title,
+        "body"        => body,
+        "proposer"    => proposer,
+        "status"      => "open",
+        "created_at"  => timestamp,
+        "block"       => block_number,
+        "votes"       => Dict{String,Any}(),
+    )
+
+    return s, Dict{Symbol,Any}(
+        :success     => true,
+        :proposal_id => proposal_id,
+        :title       => title,
+        :proposer    => proposer,
+        :opcode      => "PROPOSAL_CREATE",
+    )
+end
+
+"""
+    op_tier_check — TIER_CHECK
+Verify agent tier >= required tier (governance gate).
+Args: :agent_id, :required_tier (1–5)
+Uses QUORUM opcode slot 0x43.
+"""
+function op_tier_check(state::VMState, args::Dict{Symbol,Any})
+    sender        = args[:sender]::String
+    agent_id      = String(get(args, :agent_id, sender))
+    required_tier = Int(get(args, :required_tier, 1))
+
+    tier_map = get(state.metadata, :agent_tiers, Dict{String,Int}())
+    current_tier = get(tier_map, agent_id, 1)
+    passes = current_tier >= required_tier
+
+    return state, Dict{Symbol,Any}(
+        :success       => true,
+        :agent_id      => agent_id,
+        :current_tier  => current_tier,
+        :required_tier => required_tier,
+        :passes        => passes,
+        :error         => passes ? nothing : "tier_gate_failed",
+        :opcode        => "TIER_CHECK",
+    )
+end
+
+"""
+    op_reputation_update — REPUTATION_UPDATE
+Update agent_state.reputation_score by delta.
+Args: :agent_id, :delta, :reason (optional)
+Uses VERDICT opcode slot 0x50.
+"""
+function op_reputation_update(state::VMState, args::Dict{Symbol,Any})
+    sender       = args[:sender]::String
+    agent_id     = String(get(args, :agent_id, sender))
+    delta        = Float64(get(args, :delta, 0.0))
+    reason       = String(get(args, :reason, "opcode"))
+    block_number = Int(get(args, :block_number, 0))
+    timestamp    = Int(get(args, :timestamp, 0))
+
+    s = copy_state(state)
+    rep_scores = get!(s.metadata, :reputation_scores, Dict{String,Float64}())
+    prev_score = get(rep_scores, agent_id, 0.0)
+    new_score  = r6(prev_score + delta)
+    rep_scores[agent_id] = new_score
+
+    rep_log = get!(s.metadata, :reputation_log, Vector{Dict{String,Any}}())
+    push!(rep_log, Dict{String,Any}(
+        "agent_id" => agent_id,
+        "delta"    => delta,
+        "reason"   => reason,
+        "prev"     => prev_score,
+        "new"      => new_score,
+        "block"    => block_number,
+        "at"       => timestamp,
+    ))
+
+    return s, Dict{Symbol,Any}(
+        :success    => true,
+        :agent_id   => agent_id,
+        :delta      => delta,
+        :prev_score => prev_score,
+        :new_score  => new_score,
+        :reason     => reason,
+        :opcode     => "REPUTATION_UPDATE",
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LIFECYCLE OPCODE HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+"""
+    op_agent_fork — AGENT_FORK
+Set agent_state.fork_requested = true with parent_id.
+Args: :parent_id, :child_agent_id (optional), :fork_reason (optional)
+Uses TWIN opcode slot 0xb8.
+"""
+function op_agent_fork(state::VMState, args::Dict{Symbol,Any})
+    sender        = args[:sender]::String
+    parent_id     = String(get(args, :parent_id, sender))
+    child_agent_id = String(get(args, :child_agent_id, ""))
+    fork_reason   = String(get(args, :fork_reason, "explicit"))
+    block_number  = Int(get(args, :block_number, 0))
+    timestamp     = Int(get(args, :timestamp, 0))
+
+    if isempty(parent_id)
+        return state, Dict{Symbol,Any}(:success => false, :error => "missing_parent_id")
+    end
+
+    s = copy_state(state)
+    fork_requests = get!(s.metadata, :fork_requests, Vector{Dict{String,Any}}())
+    push!(fork_requests, Dict{String,Any}(
+        "parent_id"      => parent_id,
+        "child_agent_id" => child_agent_id,
+        "fork_reason"    => fork_reason,
+        "requested_at"   => timestamp,
+        "block"          => block_number,
+        "status"         => "pending",
+    ))
+    s.metadata[:fork_requested] = true
+    s.metadata[:fork_parent_id] = parent_id
+
+    return s, Dict{Symbol,Any}(
+        :success        => true,
+        :parent_id      => parent_id,
+        :child_agent_id => child_agent_id,
+        :fork_reason    => fork_reason,
+        :fork_index     => length(fork_requests),
+        :opcode         => "AGENT_FORK",
+    )
+end
+
+"""
+    op_agent_sleep — AGENT_SLEEP
+Set agent_state.sleeping = true until wake_at timestamp.
+Args: :agent_id, :wake_at (unix timestamp), :reason (optional)
+Uses VIGIL opcode slot 0x71.
+"""
+function op_agent_sleep(state::VMState, args::Dict{Symbol,Any})
+    sender       = args[:sender]::String
+    agent_id     = String(get(args, :agent_id, sender))
+    wake_at      = Int(get(args, :wake_at, 0))
+    reason       = String(get(args, :reason, "explicit"))
+    timestamp    = Int(get(args, :timestamp, 0))
+    block_number = Int(get(args, :block_number, 0))
+
+    if wake_at <= timestamp
+        return state, Dict{Symbol,Any}(
+            :success => false,
+            :error   => "wake_at must be in the future",
+            :wake_at  => wake_at,
+            :now      => timestamp,
+        )
+    end
+
+    s = copy_state(state)
+    agent_sleep_states = get!(s.metadata, :agent_sleep_states, Dict{String,Dict{String,Any}}())
+    agent_sleep_states[agent_id] = Dict{String,Any}(
+        "sleeping"    => true,
+        "sleep_at"    => timestamp,
+        "wake_at"     => wake_at,
+        "reason"      => reason,
+        "block"       => block_number,
+    )
+    s.metadata[:sleeping] = true
+
+    return s, Dict{Symbol,Any}(
+        :success  => true,
+        :agent_id => agent_id,
+        :wake_at  => wake_at,
+        :reason   => reason,
+        :opcode   => "AGENT_SLEEP",
+    )
+end
+
+"""
+    op_agent_wake — AGENT_WAKE
+Clear sleeping flag for agent.
+Args: :agent_id
+Uses RENEWAL opcode slot 0x78.
+"""
+function op_agent_wake(state::VMState, args::Dict{Symbol,Any})
+    sender       = args[:sender]::String
+    agent_id     = String(get(args, :agent_id, sender))
+    timestamp    = Int(get(args, :timestamp, 0))
+    block_number = Int(get(args, :block_number, 0))
+
+    agent_sleep_states = get(state.metadata, :agent_sleep_states, Dict{String,Dict{String,Any}}())
+    was_sleeping = get(get(agent_sleep_states, agent_id, Dict{String,Any}()), "sleeping", false)
+
+    s = copy_state(state)
+    s_sleep = get!(s.metadata, :agent_sleep_states, Dict{String,Dict{String,Any}}())
+    s_sleep[agent_id] = Dict{String,Any}(
+        "sleeping"  => false,
+        "woke_at"   => timestamp,
+        "block"     => block_number,
+    )
+    s.metadata[:sleeping] = false
+
+    return s, Dict{Symbol,Any}(
+        :success      => true,
+        :agent_id     => agent_id,
+        :was_sleeping => was_sleeping,
+        :woke_at      => timestamp,
+        :opcode       => "AGENT_WAKE",
+    )
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OPCODE REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -673,6 +1465,21 @@ const OPCODE_HANDLERS = Dict{UInt8, Function}(
     0x3f => op_gpu_contribution,  # GPU_CONTRIBUTION (record verified GPU seconds)
     0x54 => op_toc_mint,          # TOC_MINT (mint Synapse from GPU contribution)
     0x55 => op_toc_decay,         # TOC_DECAY (apply 1%/day Synapse decay)
+    # Economic opcodes
+    0xc0 => op_ase_mint,          # ASE_MINT (add ASE to agent balance, record mint_log)
+    0xc1 => op_ase_burn,          # ASE_BURN (subtract from balance, error if insufficient)
+    0xc2 => op_synapse_alloc,     # SYNAPSE_ALLOC (alloc synapse from dopamine pool, 10:1)
+    0xc4 => op_dopamine_check,    # DOPAMINE_CHECK (return current dopamine balance)
+    0xc5 => op_staking_lock,      # STAKING_LOCK (lock amount for duration_secs)
+    # Governance opcodes
+    0x40 => op_proposal_create,   # PROPOSAL_CREATE (create proposal dict)
+    0x41 => op_council_vote,      # COUNCIL_VOTE (record vote for proposal_id)
+    0x43 => op_tier_check,        # TIER_CHECK (verify agent tier >= required)
+    0x50 => op_reputation_update, # REPUTATION_UPDATE (update reputation_score by delta)
+    # Lifecycle opcodes
+    0xb8 => op_agent_fork,        # AGENT_FORK (fork_requested = true with parent_id)
+    0x71 => op_agent_sleep,       # AGENT_SLEEP (sleeping = true until wake_at)
+    0x78 => op_agent_wake,        # AGENT_WAKE (clear sleeping flag)
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
