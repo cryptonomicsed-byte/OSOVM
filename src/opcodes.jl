@@ -216,8 +216,21 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
 # Combined opcode map
 const OPCODE_MAP = merge(CORE_OPCODES, EXPANSION_OPCODES)
 
-# Reverse lookup
-const OPCODE_REVERSE = Dict(v => k for (k, v) in OPCODE_MAP)
+# Reverse lookup — multi-valued to preserve both Orisa names and their universal aliases.
+# 0xa0-0xa7 are intentional aliases: ORISA_* (canonical ritual names) and their
+# secular equivalents (WISDOM, THE_FORGE, CREATION, DIVINE_JUSTICE, MEMORY, FLOW,
+# THE_MESSENGER, THE_ORACLE). Both spellings map to the same byte.
+# OPCODE_REVERSE_ALL preserves every name per byte for disassembly / debugging.
+# OPCODE_REVERSE keeps the first-defined (Orisa canonical) name for execution paths.
+const OPCODE_REVERSE_ALL = let m = Dict{UInt8, Vector{Symbol}}()
+    for (k, v) in OPCODE_MAP
+        push!(get!(m, v, Symbol[]), k)
+    end
+    m
+end
+const OPCODE_REVERSE = Dict{UInt8, Symbol}(
+    byte => names[1] for (byte, names) in OPCODE_REVERSE_ALL
+)
 
 # Attribute sets
 const CORE_ATTRIBUTES = Set(keys(CORE_OPCODES))
@@ -238,10 +251,19 @@ function is_core(attr::Symbol)::Bool
 end
 
 """
-Get attribute name from opcode
+Get canonical attribute name from opcode byte. For aliased opcodes (0xa0-0xa7)
+returns the Orisa ritual name. Use get_all_attributes for all names.
 """
 function get_attribute(opcode::UInt8)::Symbol
     get(OPCODE_REVERSE, opcode, :UNKNOWN)
+end
+
+"""
+Get all attribute names for an opcode byte, including aliases.
+Returns a vector — length > 1 for the 8 aliased Orisa/secular pairs.
+"""
+function get_all_attributes(opcode::UInt8)::Vector{Symbol}
+    get(OPCODE_REVERSE_ALL, opcode, [:UNKNOWN])
 end
 
 end # module
