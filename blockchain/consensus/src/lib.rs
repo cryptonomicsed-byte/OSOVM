@@ -2,6 +2,8 @@
 // Native blockchain consensus engine (BFT)
 // 🛡️🌀⚛️🕯️🔥
 
+pub mod agent_state;
+pub mod work;
 pub mod block;
 pub mod validator;
 pub mod consensus;
@@ -10,6 +12,14 @@ pub mod messages;
 pub mod state;
 pub mod error;
 
+pub use agent_state::{
+    AgentState, AgentIdentity, AgentTier, AgentTransition,
+    LifecycleState, EconomicState, TransitionError, apply_transition,
+};
+pub use work::{
+    WorkObject, WorkKind, WorkState, WorkTransition, WorkTransitionError,
+    EconomicAsset, VoteChoice, apply_work_transition,
+};
 pub use block::{Block, BlockHeader, Transaction};
 pub use validator::{Validator, ValidatorSet};
 pub use consensus::BFTConsensus;
