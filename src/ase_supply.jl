@@ -17,8 +17,18 @@ export SupplyState, check_daily_cap, enforce_sabbath, agent_convert_ase,
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-"""Daily mint cap — 1440 Àṣẹ per day (1 per minute)"""
-const DAILY_MINT_CAP = 1440.0
+"""Emission rate and cap window, mirroring [ase] in TOC_CONSTANTS.toml."""
+const EMISSION_PER_MINUTE   = 1.0
+const EMISSION_WINDOW_HOURS = 24.0
+
+"""Daily mint cap — DERIVED, not declared (I-11).
+
+`emission_per_minute × 60 × emission_window_hours` = 1440 Àṣẹ/day. Held as a
+product so 1440 is a literal in exactly one place (the Inheritance seat count),
+and so widening the window cannot silently move a number that was chosen, not
+timed.
+"""
+const DAILY_MINT_CAP = EMISSION_PER_MINUTE * 60.0 * EMISSION_WINDOW_HOURS
 
 """AIO tithe rate — 3.69%"""
 const TITHE_RATE = 0.0369
