@@ -252,6 +252,7 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         instr      = OsoCompiler.Instruction(veil_opcode, instr_args)
         veil_result = OsoVM.execute_instruction(vm, instr)
 
+        local raw_f1 = nothing   # hoist so the same predicate gates both receipt and response
         if veil_result isa Dict
             raw_f1 = get(veil_result, "f1", get(veil_result, :f1, nothing))
             if raw_f1 !== nothing
@@ -273,8 +274,10 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
             "robustness"    => robustness,
             "timestamp"     => string(now()),
         )
-        # f1_score only in the receipt when the simulation actually produced one.
-        if f1_score > 0.0
+        # Same predicate as the response path: include f1_score iff the simulation
+        # actually produced one (raw_f1 !== nothing). A genuine measured 0.0 is
+        # preserved; "not measured" produces no key in either place.
+        if raw_f1 !== nothing
             receipt_data["f1_score"] = f1_score
         end
 
@@ -294,8 +297,8 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         "receipt"      => receipt_data,
         "wall_ms"      => wall_ms,
     )
-    # f1_score only in the response when the simulation actually measured one.
-    if f1_score > 0.0
+    # Same predicate as receipt_data: include f1_score iff raw_f1 !== nothing.
+    if raw_f1 !== nothing
         response["f1_score"] = f1_score
     end
     return json_ok(response)
