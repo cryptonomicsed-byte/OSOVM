@@ -2635,7 +2635,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             "dopamine_authorized" => dopamine_authorized,
             "difficulty"          => eval.difficulty,
             "quality"             => eval.quality,
-            "novelty"             => eval.novelty,
+            # novelty omitted — key was 1.0 (literal); per f1_score precedent a
+            # measurement-named field must not be emitted from a constant.
+            # Will be restored when I-17 (real anchor verification) is resolved.
             "verification"        => eval.verification,
             # f1_score is output-only — OSOVM-computed quality, never caller-supplied.
             # Consumers read this; they must not feed it back as an input.
@@ -2830,32 +2832,24 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             return Dict("error" => "Sabbath fasting - no claims on Saturday UTC")
         end
         
-        # Calculate accrued rewards
-        if vault.staked_since > 0
-            seconds_staked = vm.block_time - vault.last_claimed
-            new_rewards = FFI.calculate_apy_rewards(vault.locked_balance, seconds_staked)
-            vault.accrued_rewards += new_rewards
-        end
-        
-        # I-13: direct ase_balance credit removed — staking rewards must route through
-        # the emission clock, not be minted on demand here.  The accrued amount is
-        # recorded in the event so the clock can pick it up; vault.accrued_rewards is
-        # cleared so repeated CLAIM_REWARDS calls do not double-count.
-        reward = vault.accrued_rewards
-        vault.accrued_rewards = 0.0
+        # I-13: APY accrual removed. The emission clock (not yet implemented) is the
+        # only authorised ASE issuance path; computing a reward amount here and then
+        # discarding it is a silent-destruction bug, not a safe intermediate state.
+        # vault.last_claimed is advanced so repeated CLAIM_REWARDS calls do not
+        # accumulate stale time when the clock is wired in.
         vault.last_claimed = vm.block_time
-        
+
         push!(vm.events, Dict(
             :name => "RewardsClaimed",
             :wallet_id => wallet_id,
             :shrine => vm.current_sender,
-            :amount => reward
+            :amount => 0
         ))
-        
+
         return Dict(
             "status" => "claimed",
             "wallet_id" => wallet_id,
-            "reward" => reward,
+            "reward" => 0,
             "locked_balance" => vault.locked_balance
         )
     

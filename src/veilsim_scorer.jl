@@ -280,7 +280,7 @@ function score_all_veils(results::Dict)::Dict
         "timestamp" => now(),
         "total_veils_scored" => 0,
         "veils_passing_threshold" => 0,
-        "total_ase_minted" => 0.0,
+        "total_ase_scored" => 0.0,
         "average_f1" => 0.0,
         "by_veil" => Dict(),
         "scoring_records" => VeilScoringRecord[]
@@ -304,7 +304,7 @@ function score_all_veils(results::Dict)::Dict
                 passing_count += 1
             end
             
-            scoring_summary["total_ase_minted"] += record.ase_minted
+            scoring_summary["total_ase_scored"] += record.ase_minted
             
             scoring_summary["by_veil"][veil_id] = Dict(
                 "f1_score" => record.f1_score,
@@ -336,7 +336,7 @@ function get_scoring_stats()::Dict
     if isempty(SCORING_LOG)
         return Dict(
             "total_scoring_events" => 0,
-            "total_ase_minted" => 0.0,
+            "total_ase_scored" => 0.0,
             "average_f1" => 0.0
         )
     end
@@ -346,7 +346,7 @@ function get_scoring_stats()::Dict
     
     return Dict(
         "total_scoring_events" => length(SCORING_LOG),
-        "total_ase_minted" => total_ase,
+        "total_ase_scored" => total_ase,
         "average_f1" => avg_f1,
         "min_f1" => minimum(r.f1_score for r in SCORING_LOG),
         "max_f1" => maximum(r.f1_score for r in SCORING_LOG),

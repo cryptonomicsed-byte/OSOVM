@@ -79,6 +79,12 @@ jobs:
         with:
           version: '1'
 
+      - name: Instantiate Julia project
+        # Must run before include() — without a Manifest.toml the project is
+        # unresolved and any `using JSON` (or similar) throws "not installed".
+        working-directory: roots/OSOVM
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
       - name: Load-check oso_vm.jl
         # Three load-breaking bugs shipped in one session before this step existed.
         # Each would have been caught immediately on first push.  This runs before

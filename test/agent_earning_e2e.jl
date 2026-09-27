@@ -66,7 +66,7 @@ library = SimLibrary(f1_threshold=0.777, expiry_days=49)
 test("Library starts empty", library.total_simulations == 0)
 test("F1 threshold is 0.777", library.f1_threshold == 0.777)
 test("Expiry is 49 days", library.expiry_days == 49)
-test("No Àṣẹ minted yet", library.total_ase_minted == 0.0)
+test("No Àṣẹ minted yet", library.total_sim_cost_billed == 0.0)
 
 # ============================================================================
 # 3. HUMAN MINER SUBMITS SIMULATION
@@ -100,7 +100,7 @@ test("Good sim F1 = 0.92", good_sim.f1_score == 0.92)
 test("Good sim cost = 7.77 Àṣẹ", good_sim.ase_cost == 7.77)
 test("Good sim status = validated", good_sim.status == "validated")
 test("Library now has 1 simulation", library.total_simulations == 1)
-test("Library minted 7.77 Àṣẹ", library.total_ase_minted == 7.77)
+test("Library minted 7.77 Àṣẹ", library.total_sim_cost_billed == 7.77)
 
 # Bad sim (F1 = 0.5, below threshold)
 bad_sim = submit_simulation(
@@ -233,7 +233,7 @@ test_section("Library Statistics")
 stats = library_stats(library)
 test("Stats: total_simulations > 0", stats["total_simulations"] > 0)
 test("Stats: total_consumptions == 2", stats["total_consumptions"] == 2)
-test("Stats: total_ase_minted > 0", stats["total_ase_minted"] > 0.0)
+test("Stats: total_sim_cost_billed > 0", stats["total_sim_cost_billed"] > 0.0)
 test("Stats: total_ase_consumed > 0", stats["total_ase_consumed"] > 0.0)
 test("Stats: average_f1 > 0", stats["average_f1"] > 0.0)
 test("Stats: tiles indexed > 0", stats["unique_tiles_indexed"] > 0)
