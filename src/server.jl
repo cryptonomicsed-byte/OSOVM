@@ -246,7 +246,7 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         veil_result = OsoVM.execute_instruction(vm, instr)
 
         if veil_result isa Dict
-            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.88)))
+            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.0)))
             energy_drift = Float64(get(veil_result, "energy_drift", 0.02))
             robustness  = Float64(get(veil_result, "robustness",   0.95))
         end
