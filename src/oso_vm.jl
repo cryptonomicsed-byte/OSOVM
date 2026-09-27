@@ -2408,16 +2408,21 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         #   job_id         String  — UCX job UUID
         #   provider_id    String  — UCX provider that executed the job
         #   gpu_seconds    Float64 — actual GPU-seconds billed by the provider
-        #   f1_score       Float64 — sim-vs-reality quality score (0-1); 0 if N/A
         #   receipt_hash   String  — SHA-256 hex of the UCX ComputeReceipt
         #   environment_hash String — hash of the compute environment (for novelty)
         #
-        # Output: Dict with proof_value, mint_eligible, dopamine_authorized
+        # NOTE I-44: f1_score has been removed from inputs. A rewarded quantity must
+        # never be an input to its own reward — accepting quality from the caller
+        # lets any caller claim a high quality score. Quality is emitted in the
+        # response (read eval.quality / f1_score) but is NOT accepted as an argument.
+        # When a receipt-store lookup is wired, quality will be derived from the
+        # referenced verified receipt identified by receipt_hash.
+        #
+        # Output: Dict with proof_value, mint_eligible, dopamine_authorized, f1_score (output-only)
         agent_id        = string(get(args, :agent_id, ""))
         job_id          = string(get(args, :job_id, ""))
         provider_id     = string(get(args, :provider_id, ""))
         gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
-        f1_score        = Float64(get(args, :f1_score, 0.0))
         receipt_hash    = string(get(args, :receipt_hash, ""))
         env_hash        = string(get(args, :environment_hash, job_id))
 
@@ -2431,8 +2436,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Compute difficulty from gpu_seconds (log-normalised, caps at 1.0 for ≥3600s)
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
 
-        # Quality from f1_score; if no sim run, default to 0.5 (neutral)
-        quality = f1_score > 0.0 ? clamp(f1_score, 0.0, 1.0) : 0.5
+        # I-44/I-45: quality is not accepted from the caller (see input NOTE above).
+        # Neutral baseline 0.5 until receipt-store lookup derives quality from
+        # the verified receipt identified by receipt_hash.
+        quality = 0.5
 
         # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
         novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)
@@ -2506,6 +2513,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             "quality"             => eval.quality,
             "novelty"             => eval.novelty,
             "verification"        => eval.verification,
+            # f1_score is output-only — OSOVM-computed quality, never caller-supplied.
+            # Consumers read this; they must not feed it back as an input.
+            "f1_score"            => eval.quality,
         )
 
     # 1440 Inheritance Wallet Opcodes (Sacred Governance)
