@@ -160,7 +160,7 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     end
 
     # ── Execute on fresh VM (stateless per request) ────────────────────────────
-    local vm_result
+    local vm_result = nothing   # explicit init — execute_instruction returns ::Any (incl. nothing on halt)
     local receipts_out
     local ase_minted::Float64 = 0.0
     local f1_score::Float64   = 0.0
@@ -174,11 +174,12 @@ function handle_run(req::HTTP.Request)::HTTP.Response
 
         receipts_out = receipts_to_list(vm.receipts)
 
-        # Extract ase_minted from result if present
+        # Extract ase_minted and f1_score from actual opcode result — no fabrication.
+        # Callers that need a quality gate must emit f1_score in their opcode's Dict result.
+        # Missing f1_score → 0.0 (fails the ≥0.777 quality gate; not a crash).
         if vm_result isa Dict
             ase_minted = Float64(get(vm_result, "ase_minted", get(vm_result, :ase_minted, 0.0)))
-            # Simple F1 heuristic: 0.92 for success, 0.0 for error
-            f1_score   = ase_minted > 0.0 ? 0.92 : (get(vm_result, "status", "") == "error" ? 0.0 : 0.88)
+            f1_score   = Float64(get(vm_result, "f1_score",   get(vm_result, :f1_score,   0.0)))
         end
 
     catch e
@@ -189,7 +190,8 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     wall_ms = round(Int, (time() - t_start) * 1000)
 
     # ── State hash ────────────────────────────────────────────────────────────
-    vm_state_hash = "sha256:" * sha256hex(vm_result)
+    # Guard: vm_result is nothing when VM halted without returning a Dict (e.g. NO-OP opcodes).
+    vm_state_hash = "sha256:" * sha256hex(vm_result !== nothing ? vm_result : Dict{String,Any}())
 
     @info "OSOVM /run" opcode=opcode_str agent=agent wall_ms=wall_ms
 
