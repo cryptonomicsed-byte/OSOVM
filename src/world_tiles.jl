@@ -121,7 +121,7 @@ mutable struct SimLibrary
     veil_index::Dict{Int, Vector{String}}    # veil_id → [sim_ids]
     function_index::Dict{SevenFunction, Vector{String}} # dominant_function → [sim_ids]
 
-    total_ase_minted::Float64
+    total_sim_cost_billed::Float64
     total_ase_consumed::Float64
     total_simulations::Int
     total_consumptions::Int
@@ -247,7 +247,7 @@ function submit_simulation(
     # Store in library
     library.records[sim_id] = record
     library.total_simulations += 1
-    library.total_ase_minted += BASE_SIM_COST
+    library.total_sim_cost_billed += BASE_SIM_COST
 
     # Index by tiles
     for tile in covered
@@ -451,7 +451,7 @@ function library_stats(library::SimLibrary)::Dict{String,Any}
         "total_simulations" => library.total_simulations,
         "active_simulations" => active,
         "total_consumptions" => library.total_consumptions,
-        "total_ase_minted" => library.total_ase_minted,
+        "total_sim_cost_billed" => library.total_sim_cost_billed,
         "total_ase_consumed" => library.total_ase_consumed,
         "average_f1" => avg_f1,
         "unique_tiles_indexed" => length(library.tile_index),

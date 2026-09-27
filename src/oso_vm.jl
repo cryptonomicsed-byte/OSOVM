@@ -64,6 +64,7 @@ const _RECEIPT_STORE_GLOBAL      = Dict{String, Dict{String, Any}}()
 const _TOC_CONTRIBUTIONS_LOCK    = ReentrantLock()
 const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()     # agent_id → accumulated gpu_seconds (never zeroed)
 const _SYNAPSE_MINTED_GLOBAL     = Dict{String, Float64}()     # agent_id → already-minted gpu_seconds
+const _SYNAPSE_BALANCE_LOCK      = ReentrantLock()
 const _SYNAPSE_BALANCE_GLOBAL    = Dict{String, Int}()          # agent_id → cumulative Synapse balance
 # NoveltyLedger carries its own ReentrantLock — no wrapper needed.
 # Fresh per-VM ledger returns 1.0 every request; this global accumulates real counts.
@@ -426,6 +427,11 @@ end
 
 # FFI Stub Declarations (will call external libraries)
 module FFI
+    # VMState is used by stake_ase/unstake_ase type annotations below. This import
+    # was deleted alongside impact_mint, whose annotation was merely the *first*
+    # user — leaving verbatim uses that made the whole module fail to load with
+    # "UndefVarError: VMState not defined in OsoVM.FFI".
+    import ..VMState
     # Julia FFI (math/simulation)
     function veil_sim(veil_id::Int, params::Dict)::Dict{String, Float64}
         # VeilSim PID controller
@@ -2150,6 +2156,14 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     
     opcode = instr.opcode
 
+    # Deleted opcodes: reject before is_critical() so they cannot fall through
+    # to call_ase_vault() and return a fabricated success receipt.
+    if opcode == 0x11 || opcode == 0xc0
+        return Dict("success" => false,
+                    "error"   => "opcode 0x$(string(opcode, base=16)) has been removed; no replacement",
+                    "opcode"  => "0x$(string(opcode, base=16))")
+    end
+
     # Offload non-critical opcodes
     if !is_critical(opcode) && opcode != 0x00 && opcode != 0x01
         result = call_ase_vault(instr)
@@ -2427,8 +2441,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
         # Advance the minted watermark; contributions store is preserved for COMPUTE_PROOF.
         gpu_seconds = unminted_seconds   # used in TocMint event below
-        new_balance = lock(_TOC_CONTRIBUTIONS_LOCK) do
+        lock(_TOC_CONTRIBUTIONS_LOCK) do
             _SYNAPSE_MINTED_GLOBAL[agent_id] = already_minted + unminted_seconds
+        end
+        new_balance = lock(_SYNAPSE_BALANCE_LOCK) do
             prev = get(_SYNAPSE_BALANCE_GLOBAL, agent_id, 0)
             _SYNAPSE_BALANCE_GLOBAL[agent_id] = prev + minted_synapse
         end
@@ -2535,13 +2551,12 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Compute difficulty from gpu_seconds (log-normalised, caps at 1.0 for ≥3600s)
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
 
-        # Novelty via the module-level NoveltyLedger (I-41: persists across requests).
-        # vm.novelty_ledger is always empty on a fresh VM → would return 1.0 every time.
-        # Key is "agent_id:environment_hash" so one agent cannot penalise another by
-        # coincidentally (or deliberately) using the same environment_hash string.
-        # Gaming via always-unique env_hash strings requires I-17 to be resolved first.
-        novelty_key = "$(agent_id):$(env_hash)"
-        novelty = ProofEngine.record!(_NOVELTY_LEDGER_GLOBAL, novelty_key)
+        # Novelty is not yet a measurement: environment_hash comes from request args,
+        # so a caller that varies the string scores 1.0 on every submission.
+        # Removed from proof product until I-17 (real anchor/signature verification)
+        # makes the key non-caller-chosen. Passing 1.0 (multiplicative identity)
+        # leaves the other five factors unchanged.
+        novelty = 1.0
 
         # Verification: 1.0 if the agent has a GPU_CONTRIBUTION for at least gpu_seconds.
         # Check in-process VMState first; fall back to the module-level accumulator
@@ -2822,12 +2837,13 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             vault.accrued_rewards += new_rewards
         end
         
-        # Transfer rewards
+        # I-13: direct ase_balance credit removed — staking rewards must route through
+        # the emission clock, not be minted on demand here.  The accrued amount is
+        # recorded in the event so the clock can pick it up; vault.accrued_rewards is
+        # cleared so repeated CLAIM_REWARDS calls do not double-count.
         reward = vault.accrued_rewards
         vault.accrued_rewards = 0.0
         vault.last_claimed = vm.block_time
-        
-        vm.ase_balance[vm.current_sender] = get(vm.ase_balance, vm.current_sender, 0.0) + reward
         
         push!(vm.events, Dict(
             :name => "RewardsClaimed",
