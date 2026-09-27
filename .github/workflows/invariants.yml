@@ -1,0 +1,112 @@
+name: invariants
+
+# The constitutional gate for the 3-tier token economy
+# (spec: sovereign-eco-blueprint/specs/THREE_TIER_TOKENOMICS.md).
+#
+# WHY THIS EXISTS
+# ---------------
+# specs/tokenomics_invariant_check.py hard-coded $HOME/<repo> paths, and it
+# lived in the blueprint repo while the code it governs lives here. Nothing in
+# either repo's commit path ran it, so it was an audit performed when someone
+# remembered -- not a control. That is how an LLM-authored shortcut shipped
+# unchallenged: src/server.jl:181, `f1_score = ase_minted > 0.0 ? 0.92 : ...`,
+# a constant under a measurement-implying name.
+#
+# WHAT IS ACTUALLY GATED HERE
+# ---------------------------
+# Only I-47/I-48 -- the unmeasured-input condition. Every root the checker reads
+# must be present, and no grep may time out. That is a real measurement.
+#
+# The failure COUNT is deliberately NOT gated. An invariant set built from
+# negative greps ("no forbidden pattern exists") is satisfied by an empty tree,
+# so the checker scores a machine holding none of the repos BETTER than the real
+# one (24 vs 43 failures, measured on 2026-09-26). A count that rewards a
+# less-verified tree is not a compliance score, and a gate wired to it would be
+# a number-shaped decoration -- the same defect this job exists to catch. The
+# count is printed and annotated; turning it into a pass/fail budget is a
+# separate, larger call that needs the negative invariants to declare a
+# denominator first.
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - '.github/workflows/invariants.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout OSOVM (the governed tree)
+        uses: actions/checkout@v4
+        with:
+          path: roots/OSOVM
+
+      - name: Checkout sovereign-eco-blueprint (the constitution and the gate)
+        uses: actions/checkout@v4
+        with:
+          repository: cryptonomicsed-byte/sovereign-eco-blueprint
+          path: roots/sovereign-eco-blueprint
+
+      - name: Checkout omokoda-agent (root the gate reads; formerly Omo-Koda2)
+        uses: actions/checkout@v4
+        with:
+          repository: cryptonomicsed-byte/omokoda-agent
+          path: roots/Omo-Koda2
+
+      - name: Checkout Vantage (root the gate reads)
+        uses: actions/checkout@v4
+        with:
+          repository: cryptonomicsed-byte/Vantage
+          path: roots/Vantage
+
+      - name: Checkout AIO (root the gate reads)
+        uses: actions/checkout@v4
+        with:
+          repository: cryptonomicsed-byte/AIO
+          path: roots/AIO
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the invariant gate
+        id: gate
+        env:
+          ECO_HOME: ${{ github.workspace }}/roots
+          # technosis/aio is a retired-account mirror of AIO
+          # (git@github.com:Bino-Elgua/AIO.git) and is not reproducible here.
+          # Declaring it absent makes the checker print [SKIP] not-measured for
+          # it instead of counting it as a pass -- visible gap, not laundered
+          # compliance. Undeclared absences would fail the hard gate below.
+          ECO_ALLOW_ABSENT: technosis/aio
+        run: |
+          set +e
+          python3 roots/sovereign-eco-blueprint/specs/tokenomics_invariant_check.py | tee gate.log
+          failing=${PIPESTATUS[0]}
+          unmeasured=$(grep -cE '^\[FAIL\] +I-4[78]' gate.log || true)
+          echo "failing=$failing" >> "$GITHUB_OUTPUT"
+          echo "unmeasured=${unmeasured:-0}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Invariant gate"
+            echo ""
+            echo "| metric | value | gated |"
+            echo "| --- | --- | --- |"
+            echo "| unmeasured roots (I-47/I-48) | ${unmeasured:-0} | **yes** |"
+            echo "| failing invariants | $failing | no -- see header |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Hard gate -- every root present, no grep timed out (I-47/I-48)
+        run: |
+          set -euo pipefail
+          if grep -qE '^\[FAIL\] +I-4[78]' gate.log; then
+            echo "::error::I-47/I-48: the gate could not fully look at the tree. Everything it failed to see is UNVERIFIED, not fine."
+            grep -E '^\[FAIL\] +I-4[78]' gate.log
+            exit 1
+          fi
+          echo "I-47/I-48 clean: all roots present, no grep timed out."
