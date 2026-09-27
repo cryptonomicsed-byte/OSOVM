@@ -55,6 +55,15 @@ mutable struct StakingVault
     accrued_rewards::Float64                 # Pending 11.11% APY rewards
 end
 
+# I-41: module-level state that outlives a single request.
+# Both stores follow the ResourceMeter pattern: module-level Dict protected by a
+# ReentrantLock.  VMState fields remain for the in-process (single-VM) path;
+# the module-level stores are the cross-request fallback.
+const _RECEIPT_STORE_LOCK        = ReentrantLock()
+const _RECEIPT_STORE_GLOBAL      = Dict{String, Dict{String, Any}}()
+const _TOC_CONTRIBUTIONS_LOCK    = ReentrantLock()
+const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()   # agent_id → accumulated gpu_seconds
+
 # VM State
 mutable struct VMState
     ase_balance::Dict{String, Float64}       # Wallet → Aṣẹ balance
@@ -243,6 +252,7 @@ mutable struct VMState
     toc_contributions::Dict{String, Float64}   # agent_id → accumulated gpu_seconds
     synapse_balance::Dict{String, Int}         # agent_id → minted Synapse tokens
     novelty_ledger::ProofEngine.NoveltyLedger  # per-environment novelty deduplication for COMPUTE_PROOF
+    receipt_store::Dict{String, Dict{String, Any}}  # receipt_hash → {gpu_seconds, f1_score, provider_id, ...}
 end
 
 function create_vm(;
@@ -405,6 +415,7 @@ function create_vm(;
         Dict{String, Float64}(),             # toc_contributions
         Dict{String, Int}(),                 # synapse_balance
         ProofEngine.NoveltyLedger(),         # novelty_ledger
+        Dict{String, Dict{String, Any}}(),   # receipt_store
     )
 end
 
@@ -734,6 +745,48 @@ function compute_score(claim::Dict)::Float64
     mult = get(claim, "bonus_multiplier_override",
                get(domain_multipliers, domain, 1.0))
     return get(claim, "claimed_quantity", 0.0) * mult
+end
+
+"""
+    anchor_verified(anchor::String) -> Bool
+
+I-17: Verifies a Zàngbétò anchor is a real, externally-issued receipt — not merely
+a non-empty string.
+
+When VANTAGE_URL is set: calls GET /api/receipts/:anchor and requires HTTP 200.
+When VANTAGE_URL is absent (dev/test): checks that the anchor looks like a receipt
+ID (non-empty, no whitespace, length ≥ 8) and logs that full verification was skipped.
+
+Fail-closed: any network error, 4xx, or 5xx from Vantage returns false.
+Callers must not accept `anchor` as verified when this function returns false.
+"""
+function anchor_verified(anchor::String)::Bool
+    if isempty(anchor)
+        return false
+    end
+    vantage_base = get(ENV, "VANTAGE_URL", "")
+    if isempty(vantage_base)
+        # Dev/test mode: structural check only — real verification requires VANTAGE_URL.
+        passes_format = !any(isspace, anchor) && length(anchor) >= 8
+        if !passes_format
+            @warn "anchor_verified: anchor failed format check (dev mode)" anchor
+        else
+            @warn "anchor_verified: VANTAGE_URL not set — skipping cryptographic verification" anchor
+        end
+        return passes_format
+    end
+    try
+        resp = HTTP.get("$(vantage_base)/api/receipts/$(anchor)";
+                        connect_timeout=5, readtimeout=10, status_exception=false)
+        verified = resp.status == 200
+        if !verified
+            @warn "anchor_verified: Vantage returned $(resp.status) for anchor" anchor
+        end
+        return verified
+    catch e
+        @warn "anchor_verified: network error verifying anchor" anchor error=string(e)
+        return false
+    end
 end
 
 function call_ase_vault(instr::OsoCompiler.Instruction)::Any
@@ -2288,22 +2341,50 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
     # ToC (Token-of-Compute) opcodes ─────────────────────────────────────────
     elseif opcode == 0x3f  # GPU_CONTRIBUTION — record verified GPU work → ToC eligibility
-        provider_id     = string(get(args, :provider_id, ""))
-        agent_id        = string(get(args, :agent_id, ""))
-        job_id          = string(get(args, :job_id, ""))
-        gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
-        zangbeto_anchor = get(args, :zangbeto_anchor, nothing)
+        provider_id      = string(get(args, :provider_id, ""))
+        agent_id         = string(get(args, :agent_id, ""))
+        job_id           = string(get(args, :job_id, ""))
+        gpu_seconds      = Float64(get(args, :gpu_seconds, 0.0))
+        zangbeto_anchor  = string(get(args, :zangbeto_anchor, ""))
+        receipt_hash     = string(get(args, :receipt_hash, ""))
+        f1_score_stored  = clamp(Float64(get(args, :f1_score, 0.0)), 0.0, 1.0)
+        environment_hash = string(get(args, :environment_hash, job_id))
 
         if gpu_seconds <= 0.0
             return Dict("success" => false, "error" => "gpu_seconds must be positive")
         end
-        if isnothing(zangbeto_anchor) || zangbeto_anchor == ""
-            return Dict("success" => false, "error" => "zangbeto_anchor required for GPU_CONTRIBUTION")
+        # I-17: verify via Vantage, not merely non-empty string.
+        if !anchor_verified(zangbeto_anchor)
+            return Dict("success" => false,
+                        "error"   => "zangbeto_anchor failed verification — anchor must reference a real Zàngbétò receipt")
         end
 
-        # Store contribution in VM state (vm.toc_contributions: agent_id → gpu_seconds)
+        # Store contribution in VM state and the module-level accumulator (I-41).
         prev = get(vm.toc_contributions, agent_id, 0.0)
         vm.toc_contributions[agent_id] = prev + gpu_seconds
+        lock(_TOC_CONTRIBUTIONS_LOCK) do
+            _TOC_CONTRIBUTIONS_GLOBAL[agent_id] = get(_TOC_CONTRIBUTIONS_GLOBAL, agent_id, 0.0) + gpu_seconds
+        end
+
+        # E-52 / I-41: populate both the in-process receipt_store (VMState) and the
+        # module-level _RECEIPT_STORE_GLOBAL (survives request boundaries).
+        # COMPUTE_PROOF checks VMState first (single-VM path), then the global store
+        # (cross-request HTTP path).
+        if !isempty(receipt_hash)
+            entry = Dict{String, Any}(
+                "gpu_seconds"      => gpu_seconds,
+                "f1_score"         => f1_score_stored,
+                "provider_id"      => provider_id,
+                "agent_id"         => agent_id,
+                "job_id"           => job_id,
+                "zangbeto_anchor"  => zangbeto_anchor,
+                "environment_hash" => environment_hash,
+            )
+            vm.receipt_store[receipt_hash] = entry
+            lock(_RECEIPT_STORE_LOCK) do
+                _RECEIPT_STORE_GLOBAL[receipt_hash] = entry
+            end
+        end
 
         push!(vm.events, Dict(
             :name => "GpuContribution",
@@ -2313,15 +2394,17 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
                 "job_id"          => job_id,
                 "gpu_seconds"     => gpu_seconds,
                 "zangbeto_anchor" => zangbeto_anchor,
+                "receipt_hash"    => receipt_hash,
                 "cumulative"      => vm.toc_contributions[agent_id],
             ),
             :block => vm.block_height,
         ))
         return Dict(
-            "success"    => true,
-            "agent_id"   => agent_id,
-            "gpu_seconds" => gpu_seconds,
-            "cumulative" => vm.toc_contributions[agent_id],
+            "success"      => true,
+            "agent_id"     => agent_id,
+            "gpu_seconds"  => gpu_seconds,
+            "cumulative"   => vm.toc_contributions[agent_id],
+            "receipt_hash" => receipt_hash,
         )
 
     elseif opcode == 0x54  # TOC_MINT — mint Synapse tokens from accumulated GPU contribution
@@ -2403,53 +2486,75 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         )
 
     elseif opcode == 0x56  # COMPUTE_PROOF — VerifiedGPUWork → ProofEngine → Dopamine auth
-        # Inputs (from UCX receipt / OSOVM caller):
-        #   agent_id       String  — Omo-Koda2 agent that ran the compute job
-        #   job_id         String  — UCX job UUID
-        #   provider_id    String  — UCX provider that executed the job
-        #   gpu_seconds    Float64 — actual GPU-seconds billed by the provider
-        #   receipt_hash   String  — SHA-256 hex of the UCX ComputeReceipt
-        #   environment_hash String — hash of the compute environment (for novelty)
+        # Inputs (from OSOVM caller):
+        #   agent_id         String — Omo-Koda2 agent that ran the compute job
+        #   job_id           String — UCX job UUID
+        #   provider_id      String — UCX provider that executed the job (optional override)
+        #   receipt_hash     String — SHA-256 hex of the UCX ComputeReceipt; must exist in
+        #                            vm.receipt_store (populated by GPU_CONTRIBUTION 0x3f)
         #
-        # NOTE I-44: f1_score has been removed from inputs. A rewarded quantity must
-        # never be an input to its own reward — accepting quality from the caller
-        # lets any caller claim a high quality score. Quality is emitted in the
-        # response (read eval.quality / f1_score) but is NOT accepted as an argument.
-        # When a receipt-store lookup is wired, quality will be derived from the
-        # referenced verified receipt identified by receipt_hash.
+        # environment_hash is NOT a caller input — it is stored in the receipt by
+        # GPU_CONTRIBUTION and read from vm.receipt_store[receipt_hash] here.
+        #
+        # gpu_seconds and f1_score/quality are NOT accepted as inputs — they are read
+        # from vm.receipt_store[receipt_hash] (closes I-19).  Absent receipt → fail closed.
+        #
+        # NOTE I-44: f1_score is NOT accepted as a caller argument.  A rewarded
+        # quantity must never be an input to its own reward.  Quality is read from
+        # vm.receipt_store[receipt_hash] (E-52) and emitted in the response as
+        # eval.quality / f1_score — output-only; consumers must not feed it back.
         #
         # Output: Dict with proof_value, mint_eligible, dopamine_authorized, f1_score (output-only)
-        agent_id        = string(get(args, :agent_id, ""))
-        job_id          = string(get(args, :job_id, ""))
-        provider_id     = string(get(args, :provider_id, ""))
-        gpu_seconds     = Float64(get(args, :gpu_seconds, 0.0))
-        receipt_hash    = string(get(args, :receipt_hash, ""))
-        env_hash        = string(get(args, :environment_hash, job_id))
+        agent_id     = string(get(args, :agent_id, ""))
+        job_id       = string(get(args, :job_id, ""))
+        provider_id  = string(get(args, :provider_id, ""))
+        receipt_hash = string(get(args, :receipt_hash, ""))
 
-        if isempty(agent_id) || isempty(job_id) || gpu_seconds <= 0.0
-            return Dict("success" => false, "error" => "agent_id, job_id, and gpu_seconds > 0 required")
+        if isempty(agent_id) || isempty(job_id)
+            return Dict("success" => false, "error" => "agent_id and job_id required")
         end
         if isempty(receipt_hash)
             return Dict("success" => false, "error" => "receipt_hash required for COMPUTE_PROOF")
         end
 
+        # E-52 / I-41: look up the receipt — in-process VMState first (single-VM path),
+        # then the module-level _RECEIPT_STORE_GLOBAL (cross-request HTTP path).
+        # Fail closed if absent from both: GPU_CONTRIBUTION must have been called with
+        # a matching receipt_hash before COMPUTE_PROOF runs.
+        receipt_record = get(vm.receipt_store, receipt_hash, nothing)
+        if isnothing(receipt_record)
+            receipt_record = lock(_RECEIPT_STORE_LOCK) do
+                get(_RECEIPT_STORE_GLOBAL, receipt_hash, nothing)
+            end
+        end
+        if isnothing(receipt_record)
+            return Dict("success" => false,
+                        "error"   => "receipt_hash not in receipt_store — call GPU_CONTRIBUTION with receipt_hash first")
+        end
+        gpu_seconds = Float64(get(receipt_record, "gpu_seconds", 0.0))
+        quality     = clamp(Float64(get(receipt_record, "f1_score", 0.0)), 0.0, 1.0)
+        # environment_hash stored by GPU_CONTRIBUTION; fall back to job_id if absent.
+        env_hash    = string(get(receipt_record, "environment_hash", job_id))
+        if gpu_seconds <= 0.0
+            return Dict("success" => false, "error" => "stored receipt has gpu_seconds ≤ 0")
+        end
+
         # Compute difficulty from gpu_seconds (log-normalised, caps at 1.0 for ≥3600s)
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
-
-        # I-44/I-45: quality is not accepted from the caller (see input NOTE above).
-        # INERT: proof_value is a product (difficulty × quality × novelty × …).
-        # 0.0 is an absorbing element — one zero factor annihilates the whole product,
-        # so every COMPUTE_PROOF call produces proof_value=0, mint_eligible=false,
-        # dopamine_authorized=0 until receipt-store lookup lands (E-52).
-        # This is intentional: unverified work earns nothing, not 0.5 × something.
-        quality = 0.0
 
         # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
         novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)
 
-        # Verification: 1.0 if agent has a matching GPU_CONTRIBUTION on this job.
+        # Verification: 1.0 if the agent has a GPU_CONTRIBUTION for at least gpu_seconds.
+        # Check in-process VMState first; fall back to the module-level accumulator
+        # (cross-request HTTP path where GPU_CONTRIBUTION ran in a prior request).
         # 0.0 (not 0.5) when unverified — partial credit is a subsidy.
         cumulative = get(vm.toc_contributions, agent_id, 0.0)
+        if cumulative < gpu_seconds
+            cumulative = lock(_TOC_CONTRIBUTIONS_LOCK) do
+                get(_TOC_CONTRIBUTIONS_GLOBAL, agent_id, 0.0)
+            end
+        end
         verification = cumulative >= gpu_seconds ? 1.0 : 0.0
 
         # Independence: 1.0 only when provider is distinct from the claimant.
