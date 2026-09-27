@@ -64,6 +64,7 @@ const _RECEIPT_STORE_GLOBAL      = Dict{String, Dict{String, Any}}()
 const _TOC_CONTRIBUTIONS_LOCK    = ReentrantLock()
 const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()     # agent_id → accumulated gpu_seconds (never zeroed)
 const _SYNAPSE_MINTED_GLOBAL     = Dict{String, Float64}()     # agent_id → already-minted gpu_seconds
+const _SYNAPSE_BALANCE_GLOBAL    = Dict{String, Int}()          # agent_id → cumulative Synapse balance
 # NoveltyLedger carries its own ReentrantLock — no wrapper needed.
 # Fresh per-VM ledger returns 1.0 every request; this global accumulates real counts.
 const _NOVELTY_LEDGER_GLOBAL     = ProofEngine.NoveltyLedger()
@@ -425,8 +426,6 @@ end
 
 # FFI Stub Declarations (will call external libraries)
 module FFI
-    import ..VMState  # OsoVM.VMState, needed for impact_mint's type annotation
-
     # Julia FFI (math/simulation)
     function veil_sim(veil_id::Int, params::Dict)::Dict{String, Float64}
         # VeilSim PID controller
@@ -438,13 +437,10 @@ module FFI
         return Dict("f1" => actual_f1, "ase" => ase)
     end
     
-    function impact_mint(ase_amount::Float64, vm::VMState)::Float64
-        # Mint Aṣẹ for work performed
-        sender = vm.current_sender
-        vm.ase_balance[sender] = get(vm.ase_balance, sender, 0.0) + ase_amount
-        return ase_amount
-    end
-    
+    # impact_mint deleted — was a live caller-priced ASE mint reachable via opcode 0x11
+    # with no authentication and no clock gate (I-12/I-13 violation).
+    # ASE issuance must route through the emission clock; no FFI bypass.
+
     # Go FFI (networking/tithe distribution)
     function tithe_split(amount::Float64)::Dict{String, Float64}
         tithe = amount * 0.0369
@@ -550,7 +546,8 @@ function is_critical(opcode::UInt8)::Bool
     # by the fake stub at runtime. Also adds 4 opcodes (0x2b,0x3c,0x3d,0x3e)
     # whose real handlers were missing entirely and are implemented below.
     return opcode in [
-        0x11, 0x12, 0x18, 0x19, 0x1f, 0x20, 0x21, 0x22, 0x23,
+        # 0x11 IMPACT removed — was a live caller-priced ASE mint (I-12/I-13 violation)
+        0x12, 0x18, 0x19, 0x1f, 0x20, 0x21, 0x22, 0x23,
         0x27, 0x28, 0x29, 0x2a, 0x2b, 0x30, 0x31, 0x32, 0x33, 0x34,
         0x35, 0x37, 0x38, 0x3c, 0x3d, 0x3e, 0xa0, 0xa6,
         # Universal Work cluster: real stateful handlers below replace
@@ -2183,19 +2180,6 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     elseif opcode == 0x01  # NOOP
         return Dict("status" => "noop")
         
-    elseif opcode == 0x11  # IMPACT
-        ase = get(args, :ase, 0.0)
-        minted = FFI.impact_mint(ase, vm)
-        
-        # Execute nested attributes
-        if haskey(args, :nested)
-            for nested_instr in args[:nested]
-                execute_instruction(vm, nested_instr)
-            end
-        end
-        
-        return Dict("ase_minted" => minted, "balance" => vm.ase_balance[vm.current_sender])
-        
     elseif opcode == 0x12  # VEIL
         veil_id = get(args, :id, 1)
         params = Dict(:f1_target => get(args, :f1, 0.95))
@@ -2441,15 +2425,15 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Derive minted Synapse from the unminted delta — never from a caller arg.
         minted_synapse = floor(Int, gpu_hours * 1000)
 
-        # Credit to vm.synapse_balance
-        prev_synapse = get(vm.synapse_balance, agent_id, 0)
-        vm.synapse_balance[agent_id] = prev_synapse + minted_synapse
-
         # Advance the minted watermark; contributions store is preserved for COMPUTE_PROOF.
         gpu_seconds = unminted_seconds   # used in TocMint event below
-        lock(_TOC_CONTRIBUTIONS_LOCK) do
+        new_balance = lock(_TOC_CONTRIBUTIONS_LOCK) do
             _SYNAPSE_MINTED_GLOBAL[agent_id] = already_minted + unminted_seconds
+            prev = get(_SYNAPSE_BALANCE_GLOBAL, agent_id, 0)
+            _SYNAPSE_BALANCE_GLOBAL[agent_id] = prev + minted_synapse
         end
+        # Mirror into VMState for in-process consumers
+        vm.synapse_balance[agent_id] = new_balance
 
         push!(vm.events, Dict(
             :name => "TocMint",
@@ -2457,16 +2441,16 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
                 "agent_id"       => agent_id,
                 "gpu_seconds"    => gpu_seconds,
                 "minted_synapse" => minted_synapse,
-                "new_balance"    => vm.synapse_balance[agent_id],
+                "synapse_balance" => new_balance,
             ),
             :block => vm.block_height,
         ))
         return Dict(
-            "success"        => true,
-            "agent_id"       => agent_id,
-            "gpu_seconds"    => gpu_seconds,
-            "minted_synapse" => minted_synapse,
-            "new_balance"    => vm.synapse_balance[agent_id],
+            "success"         => true,
+            "agent_id"        => agent_id,
+            "gpu_seconds"     => gpu_seconds,
+            "minted_synapse"  => minted_synapse,
+            "synapse_balance" => new_balance,
         )
 
     elseif opcode == 0x55  # TOC_DECAY — apply 1%/day Synapse balance decay
@@ -2553,7 +2537,11 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
         # Novelty via the module-level NoveltyLedger (I-41: persists across requests).
         # vm.novelty_ledger is always empty on a fresh VM → would return 1.0 every time.
-        novelty = ProofEngine.record!(_NOVELTY_LEDGER_GLOBAL, env_hash)
+        # Key is "agent_id:environment_hash" so one agent cannot penalise another by
+        # coincidentally (or deliberately) using the same environment_hash string.
+        # Gaming via always-unique env_hash strings requires I-17 to be resolved first.
+        novelty_key = "$(agent_id):$(env_hash)"
+        novelty = ProofEngine.record!(_NOVELTY_LEDGER_GLOBAL, novelty_key)
 
         # Verification: 1.0 if the agent has a GPU_CONTRIBUTION for at least gpu_seconds.
         # Check in-process VMState first; fall back to the module-level accumulator

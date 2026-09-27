@@ -50,12 +50,15 @@ function load_toc_constants()::Dict{String, Any}
                 "ase_micro_per_ase"           => data["ase"]["micro_per_ase"],
                 "ase_birth_fee"               => data["ase"]["birth_fee"],
                 # [dopamine]
-                "dopamine_birth_endowment"    => data["dopamine"]["birth_endowment"],
-                "dopamine_daily_decay_rate"   => data["dopamine"]["daily_decay_rate"],
+                "dopamine_birth_endowment"    => data["dopamine"]["genesis_seed"],
+                "dopamine_daily_decay_rate"   => data["dopamine"]["idle_decay_rate"],
                 "dopamine_ase_to_dopamine"    => data["dopamine"]["ase_to_dopamine"],
-                # [synapse]
-                "synapse_birth_endowment"     => data["synapse"]["birth_endowment"],
-                "synapse_daily_decay_rate"    => data["synapse"]["daily_decay_rate"],
+                # [synapse] — no birth_endowment or daily_decay_rate in the spec;
+                # max_pool_share is the design choice. Until the spec adds endowment,
+                # derive synapse_birth_endowment from genesis_seed × conversion_ratio.
+                "synapse_birth_endowment"     => Int(data["dopamine"]["genesis_seed"] *
+                                                     data["synapse"]["conversion_ratio"]),
+                "synapse_daily_decay_rate"    => data["dopamine"]["idle_decay_rate"],
                 "synapse_conversion_ratio"    => data["synapse"]["conversion_ratio"],
                 # [esu]
                 "esu_tithe_rate"              => data["esu"]["tithe_rate"],
@@ -65,7 +68,8 @@ function load_toc_constants()::Dict{String, Any}
                 # [job_payment]
                 "job_creator_share"           => data["job_payment"]["creator_share"],
                 "job_burn_share"              => data["job_payment"]["burn_share"],
-                "job_agent_share"             => data["job_payment"]["agent_share"],
+                "job_agent_share"             => data["job_payment"]["agent_ase_treasury"] +
+                                                data["job_payment"]["agent_dopamine"],
                 # [compute_proof]
                 "compute_proof_scoring_threshold" => data["compute_proof"]["scoring_threshold"],
             )

@@ -140,49 +140,9 @@ function op_noop(state::VMState, args::Dict{Symbol,Any})
     return state, Dict{Symbol,Any}(:status => "noop")
 end
 
-function op_impact(state::VMState, args::Dict{Symbol,Any})
-    sender    = args[:sender]::String
-    ase       = Float64(get(args, :ase, 0.0))
-    quorum    = Int(get(args, :quorum, 5))
-    timestamp = Int(get(args, :timestamp, 0))
-
-    # Sabbath enforcement — no minting on Saturday
-    supply = state.metadata[:ase_supply]::AseSupply.SupplyState
-    (frozen, err) = AseSupply.enforce_sabbath(timestamp)
-    if frozen
-        return state, Dict{Symbol,Any}(:ase_minted => 0.0, :error => err, :frozen => true)
-    end
-
-    witness_mult = min(quorum, 7)
-    gross     = r6(1.0 * witness_mult * ase)
-    tithe_rate = Constants.ESU_TITHE_RATE   # 0.0369 — from TOC_CONSTANTS.toml [esu].tithe_rate
-    tithe     = r6(gross * tithe_rate)
-    net_ase   = r6(gross - tithe)
-
-    # Daily cap enforcement — 1440 Àṣẹ/day
-    s = copy_state(state)
-    s_supply = s.metadata[:ase_supply]::AseSupply.SupplyState
-    (allowed, remaining) = AseSupply.check_daily_cap(s_supply, timestamp, net_ase)
-    if !allowed
-        # Mint only what remains in today's cap
-        net_ase = remaining
-        tithe = r6(net_ase * tithe_rate / (1.0 - tithe_rate))
-        gross = r6(net_ase + tithe)
-    end
-
-    AseSupply.record_mint!(s_supply, timestamp, net_ase)
-    s.balances[sender] = r6(get(s.balances, sender, 0.0) + net_ase)
-    s.metadata[:tithe_collected] = r6(Float64(s.metadata[:tithe_collected]) + tithe)
-
-    return s, Dict{Symbol,Any}(
-        :ase_minted  => net_ase,
-        :gross       => gross,
-        :tithe       => tithe,
-        :tithe_rate  => tithe_rate,
-        :balance     => s.balances[sender],
-        :daily_remaining => r6(AseSupply.DAILY_MINT_CAP - s_supply.minted_today),
-    )
-end
+# op_impact deleted — was a caller-priced ASE mint (I-12/I-13 violation).
+# ASE issuance must route through the emission clock; this function provided
+# a direct bypass with no authentication and no single-clock invariant.
 
 function op_transfer(state::VMState, args::Dict{Symbol,Any})
     sender = args[:sender]::String
@@ -938,42 +898,9 @@ end
 # ECONOMIC OPCODE HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-"""
-    op_ase_mint — ASE_MINT
-Add ASE to agent_state.ase_balance; record in mint_log.
-Args: :agent_id, :amount, :reason (optional)
-Uses MARKET opcode slot 0xc0.
-"""
-function op_ase_mint(state::VMState, args::Dict{Symbol,Any})
-    agent_id    = String(get(args, :agent_id, args[:sender]::String))
-    amount      = r6(Float64(get(args, :amount, 0.0)))
-    reason      = String(get(args, :reason, "opcode"))
-    block_number = Int(get(args, :block_number, 0))
-
-    if amount <= 0.0
-        return state, Dict{Symbol,Any}(:success => false, :error => "amount must be positive")
-    end
-
-    s = copy_state(state)
-    agent_balances = get!(s.metadata, :ase_agent_balances, Dict{String,Float64}())
-    agent_balances[agent_id] = r6(get(agent_balances, agent_id, 0.0) + amount)
-
-    mint_log = get!(s.metadata, :mint_log, Vector{Dict{String,Any}}())
-    push!(mint_log, Dict{String,Any}(
-        "agent_id" => agent_id,
-        "amount"   => amount,
-        "reason"   => reason,
-        "block"    => block_number,
-    ))
-
-    return s, Dict{Symbol,Any}(
-        :success     => true,
-        :agent_id    => agent_id,
-        :amount      => amount,
-        :new_balance => agent_balances[agent_id],
-        :opcode      => "ASE_MINT",
-    )
-end
+# op_ase_mint deleted — was a caller-supplied amount ASE mint (I-12/I-13 violation).
+# All ASE issuance must route through the single emission clock; this opcode
+# provided an unguarded bypass with no clock gate and no supply accounting.
 
 """
     op_ase_burn — ASE_BURN
@@ -1448,7 +1375,7 @@ end
 const OPCODE_HANDLERS = Dict{UInt8, Function}(
     0x00 => op_halt,              # HALT
     0x01 => op_noop,              # NOOP
-    0x11 => op_impact,            # IMPACT
+    # 0x11 IMPACT deleted — was a caller-priced ASE mint (I-12/I-13)
     0x22 => op_transfer,          # TRANSFER
     0x20 => op_stake,             # STAKE
     0x21 => op_unstake,           # UNSTAKE
@@ -1465,7 +1392,7 @@ const OPCODE_HANDLERS = Dict{UInt8, Function}(
     0x54 => op_toc_mint,          # TOC_MINT (mint Synapse from GPU contribution)
     0x55 => op_toc_decay,         # TOC_DECAY (apply 1%/day Synapse decay)
     # Economic opcodes
-    0xc0 => op_ase_mint,          # ASE_MINT (add ASE to agent balance, record mint_log)
+    # 0xc0 ASE_MINT deleted — was a caller-supplied amount ASE mint (I-12/I-13)
     0xc1 => op_ase_burn,          # ASE_BURN (subtract from balance, error if insufficient)
     0xc2 => op_synapse_alloc,     # SYNAPSE_ALLOC (alloc synapse from dopamine pool, 10:1)
     0xc4 => op_dopamine_check,    # DOPAMINE_CHECK (return current dopamine balance)
