@@ -62,7 +62,8 @@ end
 const _RECEIPT_STORE_LOCK        = ReentrantLock()
 const _RECEIPT_STORE_GLOBAL      = Dict{String, Dict{String, Any}}()
 const _TOC_CONTRIBUTIONS_LOCK    = ReentrantLock()
-const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()     # agent_id → accumulated gpu_seconds
+const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()     # agent_id → accumulated gpu_seconds (never zeroed)
+const _SYNAPSE_MINTED_GLOBAL     = Dict{String, Float64}()     # agent_id → already-minted gpu_seconds
 # NoveltyLedger carries its own ReentrantLock — no wrapper needed.
 # Fresh per-VM ledger returns 1.0 every request; this global accumulates real counts.
 const _NOVELTY_LEDGER_GLOBAL     = ProofEngine.NoveltyLedger()
@@ -599,8 +600,7 @@ function is_critical(opcode::UInt8)::Bool
         # time -- previously defined but unreachable dead code.
         0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
         # ToC (Token-of-Compute) opcodes: GPU_CONTRIBUTION (0x3f),
-        # TOC_MINT (0x54), TOC_DECAY (0x55) — real handlers below
-        # call is_fully_verified() gate before minting Synapse.
+        # TOC_MINT (0x54), TOC_DECAY (0x55)
         0x3f, 0x54, 0x55,
         # COMPUTE_PROOF (0x56): VerifiedGPUWork → ProofEngine → Dopamine auth
         0x56,
@@ -617,9 +617,6 @@ Gate function for TOC_MINT (0x54). Returns true only when:
   4. A GpuContribution event exists in vm.events for this agent (zangbeto_anchor proof)
 
 Fail-closed: any missing data returns false.
-"""
-"""
-    is_fully_verified(vm, agent_id, claimed_gpu_seconds) -> Bool
 
 LEGACY gate — GPU-specific.  Kept for backward compatibility with TOC_MINT (0x54)
 callers that have not yet been migrated to the generalized WorkClaim API.
@@ -756,9 +753,8 @@ end
 Weak guard: checks that the anchor is non-empty, whitespace-free, and ≥ 8 chars;
 when VANTAGE_URL is set, also checks HTTP existence (GET /api/receipts/:anchor → 200).
 
-NOT a signature verification — I-17 still fails until a real signature check is
-implemented here (Ed25519 over anchor bytes, keyed to the Zàngbétò service key).
-Renamed from anchor_verified so the I-17 grep does not produce a false PASS.
+NOT a signature verification — I-17 is open until Ed25519 verification over
+anchor bytes is implemented here (keyed to the Zàngbétò service key).
 """
 function anchor_present(anchor::String)::Bool
     if isempty(anchor)
@@ -2416,36 +2412,43 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Read accumulated GPU seconds from the persistent global store.
         # VMState.toc_contributions is empty on a fresh HTTP VM; the global store
         # is authoritative for cross-request minting.
-        gpu_seconds = lock(_TOC_CONTRIBUTIONS_LOCK) do
-            get(_TOC_CONTRIBUTIONS_GLOBAL, agent_id, get(vm.toc_contributions, agent_id, 0.0))
+        # _TOC_CONTRIBUTIONS_GLOBAL is NEVER zeroed — COMPUTE_PROOF reads it for the
+        # verification factor.  Instead, _SYNAPSE_MINTED_GLOBAL tracks what has already
+        # been minted; only the unminted delta is issued here.
+        accumulated, already_minted = lock(_TOC_CONTRIBUTIONS_LOCK) do
+            acc  = get(_TOC_CONTRIBUTIONS_GLOBAL, agent_id, get(vm.toc_contributions, agent_id, 0.0))
+            done = get(_SYNAPSE_MINTED_GLOBAL, agent_id, 0.0)
+            (acc, done)
         end
 
-        if gpu_seconds <= 0.0
-            return Dict("success" => false, "error" => "no accumulated GPU contribution for $agent_id")
+        unminted_seconds = accumulated - already_minted
+        if unminted_seconds <= 0.0
+            return Dict("success" => false, "error" => "no new GPU contribution to mint for $agent_id")
         end
 
         # Mint floor: < 3.6 GPU-seconds → defer
-        gpu_hours = gpu_seconds / 3600.0
+        gpu_hours = unminted_seconds / 3600.0
         if gpu_hours < 0.001
             return Dict(
-                "success"   => false,
-                "error"     => "below_mint_floor",
-                "gpu_hours" => gpu_hours,
-                "floor"     => 0.001,
+                "success"          => false,
+                "error"            => "below_mint_floor",
+                "gpu_hours"        => gpu_hours,
+                "unminted_seconds" => unminted_seconds,
+                "floor"            => 0.001,
             )
         end
 
-        # Derive minted Synapse from the stored amount — never from a caller arg.
+        # Derive minted Synapse from the unminted delta — never from a caller arg.
         minted_synapse = floor(Int, gpu_hours * 1000)
 
         # Credit to vm.synapse_balance
         prev_synapse = get(vm.synapse_balance, agent_id, 0)
         vm.synapse_balance[agent_id] = prev_synapse + minted_synapse
 
-        # Drain from both stores so the same seconds can't be minted twice.
-        vm.toc_contributions[agent_id] = 0.0
+        # Advance the minted watermark; contributions store is preserved for COMPUTE_PROOF.
+        gpu_seconds = unminted_seconds   # used in TocMint event below
         lock(_TOC_CONTRIBUTIONS_LOCK) do
-            _TOC_CONTRIBUTIONS_GLOBAL[agent_id] = 0.0
+            _SYNAPSE_MINTED_GLOBAL[agent_id] = already_minted + unminted_seconds
         end
 
         push!(vm.events, Dict(

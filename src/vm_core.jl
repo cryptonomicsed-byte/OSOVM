@@ -540,12 +540,11 @@ end
     op_toc_mint — TOC_MINT (0x54)
 Mint Synapse tokens from accumulated GPU contribution.
 Gate: toc_is_fully_verified() must pass first.
-Args: :agent_id, :gpu_seconds, :synapse_estimate (optional)
+Args: :agent_id, :gpu_seconds
 """
 function op_toc_mint(state::VMState, args::Dict{Symbol,Any})
     agent_id         = String(get(args, :agent_id, ""))
     gpu_seconds      = Float64(get(args, :gpu_seconds, 0.0))
-    synapse_estimate = Int(get(args, :synapse_estimate, 0))
     block_number     = Int(get(args, :block_number, 0))
 
     # Gate: is_fully_verified must pass before minting
@@ -569,7 +568,7 @@ function op_toc_mint(state::VMState, args::Dict{Symbol,Any})
         )
     end
 
-    minted_synapse = synapse_estimate > 0 ? synapse_estimate : floor(Int, gpu_hours * 1000)
+    minted_synapse = floor(Int, gpu_hours * 1000)
 
     s = copy_state(state)
     contributions  = s.metadata[:toc_contributions]::Dict{String,Float64}
