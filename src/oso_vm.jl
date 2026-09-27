@@ -2437,9 +2437,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
 
         # I-44/I-45: quality is not accepted from the caller (see input NOTE above).
-        # Neutral baseline 0.5 until receipt-store lookup derives quality from
-        # the verified receipt identified by receipt_hash.
-        quality = 0.5
+        # 0.0 (not 0.5) until receipt-store lookup derives quality from the verified
+        # receipt identified by receipt_hash. 0.5 is a free subsidy; 0.0 is honest:
+        # no measurement, no credit. Tracked: E-52.
+        quality = 0.0
 
         # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
         novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)

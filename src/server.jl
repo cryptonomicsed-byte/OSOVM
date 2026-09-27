@@ -175,11 +175,15 @@ function handle_run(req::HTTP.Request)::HTTP.Response
         receipts_out = receipts_to_list(vm.receipts)
 
         # Extract ase_minted and f1_score from actual opcode result — no fabrication.
-        # Callers that need a quality gate must emit f1_score in their opcode's Dict result.
-        # Missing f1_score → 0.0 (fails the ≥0.777 quality gate; not a crash).
+        # f1_score is omitted from the response entirely when the opcode didn't produce one.
+        # A default of 0.0 would write a measurement-named field with a literal, which is
+        # the same defect as the fabricated 0.92 (I-44). Omit rather than default.
         if vm_result isa Dict
             ase_minted = Float64(get(vm_result, "ase_minted", get(vm_result, :ase_minted, 0.0)))
-            f1_score   = Float64(get(vm_result, "f1_score",   get(vm_result, :f1_score,   0.0)))
+            raw_f1 = get(vm_result, "f1_score", get(vm_result, :f1_score, nothing))
+            if raw_f1 !== nothing
+                f1_score = Float64(raw_f1)
+            end
         end
 
     catch e
@@ -199,13 +203,16 @@ function handle_run(req::HTTP.Request)::HTTP.Response
         "status"         => "ok",
         "run_id"         => run_id,
         "opcode"         => opcode_str,
-        "f1_score"       => f1_score,
         "ase_minted"     => ase_minted,
         "receipts"       => receipts_out,
         "vm_state_hash"  => vm_state_hash,
         "wall_ms"        => wall_ms,
         "result"         => vm_result,
     )
+    # Include f1_score only when the opcode actually produced one — never a default.
+    if f1_score > 0.0
+        response["f1_score"] = f1_score
+    end
     return json_ok(response)
 end
 
@@ -246,9 +253,14 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         veil_result = OsoVM.execute_instruction(vm, instr)
 
         if veil_result isa Dict
-            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.0)))
-            energy_drift = Float64(get(veil_result, "energy_drift", 0.02))
-            robustness  = Float64(get(veil_result, "robustness",   0.95))
+            raw_f1 = get(veil_result, "f1", get(veil_result, :f1, nothing))
+            if raw_f1 !== nothing
+                f1_score = Float64(raw_f1)
+            end
+            # energy_drift and robustness have physical defaults (non-zero baseline for a
+            # running simulation); omit them from the receipt only when truly absent.
+            energy_drift = Float64(get(veil_result, "energy_drift", get(veil_result, :energy_drift, 0.0)))
+            robustness   = Float64(get(veil_result, "robustness",   get(veil_result, :robustness,   0.0)))
         end
 
         receipt_data = Dict{String,Any}(
@@ -257,11 +269,14 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
             "veil_ids"      => collect(Int, veil_ids),
             "entity_count"  => entity_count,
             "step_count"    => step_count,
-            "f1_score"      => f1_score,
             "energy_drift"  => energy_drift,
             "robustness"    => robustness,
             "timestamp"     => string(now()),
         )
+        # f1_score only in the receipt when the simulation actually produced one.
+        if f1_score > 0.0
+            receipt_data["f1_score"] = f1_score
+        end
 
     catch e
         @warn "OSOVM /veilsim/run error" agent=agent error=string(e)
@@ -274,12 +289,15 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     response = Dict{String,Any}(
         "status"       => "ok",
         "run_id"       => run_id,
-        "f1_score"     => f1_score,
         "energy_drift" => energy_drift,
         "robustness"   => robustness,
         "receipt"      => receipt_data,
         "wall_ms"      => wall_ms,
     )
+    # f1_score only in the response when the simulation actually measured one.
+    if f1_score > 0.0
+        response["f1_score"] = f1_score
+    end
     return json_ok(response)
 end
 
