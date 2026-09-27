@@ -78,49 +78,12 @@ mutable struct Engine
 end
 Engine() = Engine(NoveltyLedger())
 
-function evaluate_simulation(engine::Engine, proof::Dict)::ProofEvaluation
-    env_hash    = get(proof, "environment_hash", "")
-    trajectory  = get(proof, "trajectory_hash", "")
-    checkpoint  = get(proof, "checkpoint_root", "")
-    sensor      = get(proof, "sensor_hash", "")
-    sig         = get(proof, "signature", "")
-    metrics     = get(proof, "metrics", Dict())
-    crashes     = get(metrics, "crashes", 1)
-
-    difficulty   = max(get(proof, "difficulty", 1.0), 0.0)
-    quality      = crashes == 0 ? get(metrics, "controller_stability", 0.8) : 0.0
-    novelty      = record!(engine.novelty, env_hash)
-    verification = (!isempty(trajectory) ? 0.3 : 0.0) +
-                   (!isempty(checkpoint) ? 0.3 : 0.0) +
-                   (!isempty(sensor)     ? 0.2 : 0.0) +
-                   (!isempty(sig)        ? 0.2 : 0.0)
-    independence = 0.8   # stub — real: witness chain check
-    gates_cleared = get(metrics, "gates_cleared", 0)
-    gates_total   = max(get(metrics, "gates_total", 1), 1)
-    utility = clamp((gates_cleared / gates_total) * 0.6 +
-                    get(metrics, "controller_stability", 0.0) * 0.4, 0.0, 1.0)
-
-    compute_evaluation(get(proof, "proof_id", ""), Simulation,
-        difficulty, quality, novelty, verification, independence, utility)
-end
-
-function evaluate_gaussian(engine::Engine, proof::Dict)::Union{ProofEvaluation, String}
-    quality_agg = get(get(proof, "quality", Dict()), "aggregate", 0.0)
-    if quality_agg < 0.3
-        return "gaussian quality below minimum threshold (0.3)"
-    end
-    env_hash     = get(proof, "splat_hash", "")
-    difficulty   = max(get(proof, "difficulty", 1.0), 0.0)
-    quality      = get(proof, "quality_score", quality_agg)
-    novelty      = record!(engine.novelty, env_hash)
-    sig          = get(proof, "signature", "")
-    verification = isempty(sig) ? 0.6 : 0.9
-    wc           = get(get(proof, "quality", Dict()), "witness_count", 0)
-    independence = min(1.0 + wc * 0.15, 1.0)
-    utility      = get(get(proof, "quality", Dict()), "area_novelty_factor", 0.0) / 3.0
-
-    compute_evaluation(get(proof, "proof_id", ""), Spatial,
-        difficulty, quality, novelty, verification, independence, utility)
-end
+# evaluate_simulation and evaluate_gaussian deleted (I-20 / 2026-09-27).
+# Both had 0 callers, no exports, no tests — same class as mint_ase_for_veil.
+# Their defaults (difficulty=1.0, quality=0.8/controller_stability, independence=0.8)
+# conflicted with COMPUTE_PROOF's inline factor computation in oso_vm.jl, which
+# is the only live path. compute_evaluation (above) is the canonical factor site.
+# When domain-specific evaluators are needed, build them to call compute_evaluation
+# with attested factors — not to supply generous defaults.
 
 end # module

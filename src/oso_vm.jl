@@ -2447,12 +2447,15 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
         novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)
 
-        # Verification: 1.0 if agent has a matching GPU_CONTRIBUTION on this job
+        # Verification: 1.0 if agent has a matching GPU_CONTRIBUTION on this job.
+        # 0.0 (not 0.5) when unverified — partial credit is a subsidy.
         cumulative = get(vm.toc_contributions, agent_id, 0.0)
-        verification = cumulative >= gpu_seconds ? 1.0 : 0.5
+        verification = cumulative >= gpu_seconds ? 1.0 : 0.0
 
-        # Independence (always 1.0 for single-provider UCX jobs; multi-provider = higher)
-        independence = 1.0
+        # Independence: 1.0 only when provider is distinct from the claimant.
+        # Self-dealing (provider_id == agent_id) or absent provider → 0.0.
+        # provider_id != agent_id is computable today from the existing args.
+        independence = (!isempty(provider_id) && provider_id != agent_id) ? 1.0 : 0.0
 
         # Utility: scale with gpu_seconds (capped at 8h for max utility)
         utility = clamp(gpu_seconds / (8.0 * 3600.0), 0.0, 1.0)
