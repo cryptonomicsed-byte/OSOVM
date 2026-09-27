@@ -1,5 +1,12 @@
-# vm_core.jl — Ọ̀ṢỌ́VM Hardened Deterministic Core
-# Pure state transitions. No randomness. No system time. No global mutation.
+# vm_core.jl — Ọ̀ṢỌ́VM TEST HARNESS VM
+#
+# STATUS: test harness only. No production code includes this module.
+# oso_vm.jl is the canonical production VM.
+#
+# ROLE: deterministic, side-effect-free VM for unit testing. No HTTP, no system
+# time, no global mutation. Tests in test/vm_core_test.jl are the only live
+# test coverage in the repo and must remain green.
+#
 # Bínò ÈL Guà — Crown Architect
 # Ọbàtálá — Master Auditor
 
