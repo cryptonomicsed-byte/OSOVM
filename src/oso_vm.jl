@@ -62,7 +62,10 @@ end
 const _RECEIPT_STORE_LOCK        = ReentrantLock()
 const _RECEIPT_STORE_GLOBAL      = Dict{String, Dict{String, Any}}()
 const _TOC_CONTRIBUTIONS_LOCK    = ReentrantLock()
-const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()   # agent_id → accumulated gpu_seconds
+const _TOC_CONTRIBUTIONS_GLOBAL  = Dict{String, Float64}()     # agent_id → accumulated gpu_seconds
+# NoveltyLedger carries its own ReentrantLock — no wrapper needed.
+# Fresh per-VM ledger returns 1.0 every request; this global accumulates real counts.
+const _NOVELTY_LEDGER_GLOBAL     = ProofEngine.NoveltyLedger()
 
 # VM State
 mutable struct VMState
@@ -748,19 +751,16 @@ function compute_score(claim::Dict)::Float64
 end
 
 """
-    anchor_verified(anchor::String) -> Bool
+    anchor_present(anchor::String) -> Bool
 
-I-17: Verifies a Zàngbétò anchor is a real, externally-issued receipt — not merely
-a non-empty string.
+Weak guard: checks that the anchor is non-empty, whitespace-free, and ≥ 8 chars;
+when VANTAGE_URL is set, also checks HTTP existence (GET /api/receipts/:anchor → 200).
 
-When VANTAGE_URL is set: calls GET /api/receipts/:anchor and requires HTTP 200.
-When VANTAGE_URL is absent (dev/test): checks that the anchor looks like a receipt
-ID (non-empty, no whitespace, length ≥ 8) and logs that full verification was skipped.
-
-Fail-closed: any network error, 4xx, or 5xx from Vantage returns false.
-Callers must not accept `anchor` as verified when this function returns false.
+NOT a signature verification — I-17 still fails until a real signature check is
+implemented here (Ed25519 over anchor bytes, keyed to the Zàngbétò service key).
+Renamed from anchor_verified so the I-17 grep does not produce a false PASS.
 """
-function anchor_verified(anchor::String)::Bool
+function anchor_present(anchor::String)::Bool
     if isempty(anchor)
         return false
     end
@@ -769,9 +769,9 @@ function anchor_verified(anchor::String)::Bool
         # Dev/test mode: structural check only — real verification requires VANTAGE_URL.
         passes_format = !any(isspace, anchor) && length(anchor) >= 8
         if !passes_format
-            @warn "anchor_verified: anchor failed format check (dev mode)" anchor
+            @warn "anchor_present: anchor failed format check (dev mode)" anchor
         else
-            @warn "anchor_verified: VANTAGE_URL not set — skipping cryptographic verification" anchor
+            @warn "anchor_present: VANTAGE_URL not set — skipping cryptographic verification" anchor
         end
         return passes_format
     end
@@ -780,11 +780,11 @@ function anchor_verified(anchor::String)::Bool
                         connect_timeout=5, readtimeout=10, status_exception=false)
         verified = resp.status == 200
         if !verified
-            @warn "anchor_verified: Vantage returned $(resp.status) for anchor" anchor
+            @warn "anchor_present: Vantage returned $(resp.status) for anchor" anchor
         end
         return verified
     catch e
-        @warn "anchor_verified: network error verifying anchor" anchor error=string(e)
+        @warn "anchor_present: network error verifying anchor" anchor error=string(e)
         return false
     end
 end
@@ -2354,7 +2354,7 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             return Dict("success" => false, "error" => "gpu_seconds must be positive")
         end
         # I-17: verify via Vantage, not merely non-empty string.
-        if !anchor_verified(zangbeto_anchor)
+        if !anchor_present(zangbeto_anchor)
             return Dict("success" => false,
                         "error"   => "zangbeto_anchor failed verification — anchor must reference a real Zàngbétò receipt")
         end
@@ -2407,41 +2407,46 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             "receipt_hash" => receipt_hash,
         )
 
-    elseif opcode == 0x54  # TOC_MINT — mint Synapse tokens from accumulated GPU contribution
-        agent_id           = string(get(args, :agent_id, ""))
-        gpu_seconds        = Float64(get(args, :gpu_seconds, 0.0))
-        synapse_estimate   = Int(get(args, :synapse_estimate, 0))
+    elseif opcode == 0x54  # TOC_MINT — mint Synapse from accumulated GPU contribution
+        # I-12: no caller-supplied issuance amount — synapse_estimate arg removed.
+        # I-19: gpu_seconds is read from _TOC_CONTRIBUTIONS_GLOBAL (recorded by
+        #        GPU_CONTRIBUTION), not from the caller.
+        agent_id = string(get(args, :agent_id, ""))
 
-        # Gate: is_fully_verified must pass before minting
-        if !is_fully_verified(vm, agent_id, gpu_seconds)
-            return Dict(
-                "success" => false,
-                "error"   => "not_fully_verified",
-                "reason"  => "GPU contribution failed verification gate: " *
-                             "requires gpu_seconds > 0, zangbeto_anchor on file, and " *
-                             "cumulative contribution matches claim",
-            )
+        # Read accumulated GPU seconds from the persistent global store.
+        # VMState.toc_contributions is empty on a fresh HTTP VM; the global store
+        # is authoritative for cross-request minting.
+        gpu_seconds = lock(_TOC_CONTRIBUTIONS_LOCK) do
+            get(_TOC_CONTRIBUTIONS_GLOBAL, agent_id, get(vm.toc_contributions, agent_id, 0.0))
+        end
+
+        if gpu_seconds <= 0.0
+            return Dict("success" => false, "error" => "no accumulated GPU contribution for $agent_id")
         end
 
         # Mint floor: < 3.6 GPU-seconds → defer
         gpu_hours = gpu_seconds / 3600.0
         if gpu_hours < 0.001
             return Dict(
-                "success" => false,
-                "error"   => "below_mint_floor",
+                "success"   => false,
+                "error"     => "below_mint_floor",
                 "gpu_hours" => gpu_hours,
                 "floor"     => 0.001,
             )
         end
 
-        minted_synapse = synapse_estimate > 0 ? synapse_estimate : floor(Int, gpu_hours * 1000)
+        # Derive minted Synapse from the stored amount — never from a caller arg.
+        minted_synapse = floor(Int, gpu_hours * 1000)
 
         # Credit to vm.synapse_balance
         prev_synapse = get(vm.synapse_balance, agent_id, 0)
         vm.synapse_balance[agent_id] = prev_synapse + minted_synapse
 
-        # Drain from toc_contributions
-        vm.toc_contributions[agent_id] = max(0.0, get(vm.toc_contributions, agent_id, 0.0) - gpu_seconds)
+        # Drain from both stores so the same seconds can't be minted twice.
+        vm.toc_contributions[agent_id] = 0.0
+        lock(_TOC_CONTRIBUTIONS_LOCK) do
+            _TOC_CONTRIBUTIONS_GLOBAL[agent_id] = 0.0
+        end
 
         push!(vm.events, Dict(
             :name => "TocMint",
@@ -2456,6 +2461,7 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         return Dict(
             "success"        => true,
             "agent_id"       => agent_id,
+            "gpu_seconds"    => gpu_seconds,
             "minted_synapse" => minted_synapse,
             "new_balance"    => vm.synapse_balance[agent_id],
         )
@@ -2542,8 +2548,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Compute difficulty from gpu_seconds (log-normalised, caps at 1.0 for ≥3600s)
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
 
-        # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
-        novelty = ProofEngine.record!(vm.novelty_ledger, env_hash)
+        # Novelty via the module-level NoveltyLedger (I-41: persists across requests).
+        # vm.novelty_ledger is always empty on a fresh VM → would return 1.0 every time.
+        novelty = ProofEngine.record!(_NOVELTY_LEDGER_GLOBAL, env_hash)
 
         # Verification: 1.0 if the agent has a GPU_CONTRIBUTION for at least gpu_seconds.
         # Check in-process VMState first; fall back to the module-level accumulator
