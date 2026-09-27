@@ -102,6 +102,58 @@ end
 json_ok(payload) = HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(payload))
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AUTHENTICATION  (I-38 / I-39)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared secret for server-to-server calls.  Set OSOVM_API_KEY in production.
+# Dev mode: if unset, pass-through with a warning + use X-Agent-Id header.
+const OSOVM_API_KEY = get(ENV, "OSOVM_API_KEY", "")
+
+"""
+Authenticate an incoming request.  Returns `(agent_id, nothing)` on success or
+`("", error_string)` on failure.
+
+Token format:  `Authorization: Bearer <api_key>|<agent_id>`
+The verified `agent_id` becomes `vm.current_sender` (closes I-39 — the caller
+cannot choose the credited identity by submitting an :agent body field).
+"""
+function authenticate(req::HTTP.Request)
+    if isempty(OSOVM_API_KEY)
+        @warn "OSOVM_API_KEY not set — authentication disabled; set in production"
+        agent_id = HTTP.header(req, "X-Agent-Id", "genesis")
+        return String(agent_id), nothing
+    end
+    auth_header = HTTP.header(req, "Authorization", "")
+    if isempty(auth_header)
+        return "", "missing Authorization header (Bearer <api_key>|<agent_id>)"
+    end
+    if !startswith(lowercase(auth_header), "bearer ")
+        return "", "Authorization must be a Bearer token"
+    end
+    token = strip(SubString(auth_header, 8))
+    pipe  = findfirst('|', token)
+    if isnothing(pipe)
+        return "", "invalid token format: expected <api_key>|<agent_id>"
+    end
+    key      = String(SubString(token, 1, pipe - 1))
+    agent_id = String(SubString(token, pipe + 1))
+    if key != OSOVM_API_KEY
+        return "", "invalid API key"
+    end
+    if isempty(agent_id)
+        return "", "agent_id must be non-empty in token"
+    end
+    return agent_id, nothing
+end
+
+"""HTTP 401 helper."""
+function unauthorized(msg::String)
+    body = JSON3.write(Dict{String,Any}("status" => "error", "error" => msg))
+    return HTTP.Response(401, ["Content-Type" => "application/json",
+                               "WWW-Authenticate" => "Bearer"], body)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTE HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -109,21 +161,19 @@ function handle_health(req::HTTP.Request)::HTTP.Response
     json_ok(Dict{String,Any}("status" => "ok", "version" => "osovm/1"))
 end
 
-function handle_opcodes(req::HTTP.Request)::HTTP.Response
-    core_list = [Dict{String,Any}("name" => string(k), "opcode" => Int(v), "type" => "core")
-                 for (k, v) in Opcodes.CORE_OPCODES]
-    exp_list  = [Dict{String,Any}("name" => string(k), "opcode" => Int(v), "type" => "expansion")
-                 for (k, v) in Opcodes.EXPANSION_OPCODES]
-    json_ok(Dict{String,Any}(
-        "core_opcodes"      => core_list,
-        "expansion_opcodes" => exp_list,
-        "total"             => length(core_list) + length(exp_list),
-    ))
-end
+# handle_opcodes removed (I-42): GET /opcodes enumerated every mint-capable
+# opcode name to unauthenticated callers.  The lookup table lives in opcodes.jl
+# for internal use; it is no longer served over HTTP.
 
 function handle_run(req::HTTP.Request)::HTTP.Response
     run_id   = new_run_id()
     t_start  = time()
+
+    # ── Authenticate — agent identity comes from the verified token (I-38/I-39) ─
+    agent, auth_err = authenticate(req)
+    if auth_err !== nothing
+        return unauthorized(auth_err)
+    end
 
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
@@ -151,7 +201,7 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     end
 
     # ── Build instruction args ─────────────────────────────────────────────────
-    agent   = string(get(body_obj, :agent, "genesis"))
+    # :agent body field is ignored — identity comes from the auth token above.
     raw_args = get(body_obj, :args, nothing)
     instr_args = if raw_args !== nothing
         to_sym_dict(raw_args)
@@ -220,6 +270,12 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     run_id  = new_run_id()
     t_start = time()
 
+    # ── Authenticate ───────────────────────────────────────────────────────────
+    agent, auth_err = authenticate(req)
+    if auth_err !== nothing
+        return unauthorized(auth_err)
+    end
+
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
     try
@@ -231,7 +287,7 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     veil_ids     = get(body_obj, :veil_ids,     [1])
     entity_count = Int(get(body_obj, :entity_count, 5))
     step_count   = Int(get(body_obj, :step_count,   100))
-    agent        = string(get(body_obj, :agent,  "genesis"))
+    # :agent body field is ignored — identity comes from the auth token.
 
     # ── Execute VEIL on fresh VM ───────────────────────────────────────────────
     local f1_score::Float64     = 0.0
@@ -606,8 +662,7 @@ function router(req::HTTP.Request)::HTTP.Response
         if target == "/health" && method == "GET"
             return handle_health(req)
 
-        elseif target == "/opcodes" && method == "GET"
-            return handle_opcodes(req)
+        # GET /opcodes removed (I-42) — see handle_opcodes tombstone above.
 
         elseif target == "/run" && method == "POST"
             return handle_run(req)

@@ -2244,7 +2244,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         gpu_seconds      = Float64(get(args, :gpu_seconds, 0.0))
         zangbeto_anchor  = string(get(args, :zangbeto_anchor, ""))
         receipt_hash     = string(get(args, :receipt_hash, ""))
-        f1_score_stored  = clamp(Float64(get(args, :f1_score, 0.0)), 0.0, 1.0)
+        # f1_score removed from GPU_CONTRIBUTION args (I-19): a scoring dimension
+        # must not be a caller input.  Quality is computed by COMPUTE_PROOF (0x56)
+        # from the work record, never pre-supplied by the claimant.
         environment_hash = string(get(args, :environment_hash, job_id))
 
         if gpu_seconds <= 0.0
@@ -2270,7 +2272,8 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         if !isempty(receipt_hash)
             entry = Dict{String, Any}(
                 "gpu_seconds"      => gpu_seconds,
-                "f1_score"         => f1_score_stored,
+                # f1_score removed (I-19) — COMPUTE_PROOF computes quality from work
+                # evidence; it is never a caller-supplied field in the receipt.
                 "provider_id"      => provider_id,
                 "agent_id"         => agent_id,
                 "job_id"           => job_id,
