@@ -21,7 +21,7 @@ using .VeilIndex
 using .VeilSimScorer
 using .AseSupply: SupplyState, check_daily_cap, record_mint!
 
-export mint_ase_for_veil, distribute_ase_offering, AseVeilMinted,
+export distribute_ase_offering, AseVeilMinted,
        get_ase_balance, transfer_ase, ase_transaction_log, AseWallet
 
 # ============================================================================
@@ -69,27 +69,12 @@ end
 # CONSTANTS
 # ============================================================================
 
-"""
-Distribution ratios for offerings (50/25/10/10/5):
-  treasury    50% — ecosystem upkeep / operating buffer
-  inheritance 25% — the 1440 Inheritance Wallets
-  embodiment  10% — funds real embodiment (robot hardware/compute); this
-              wallet was previously "shrine" (Ọbàtálá) — repurposed, same
-              10% share, new destination
-  ubi         10% — universal basic income pool
-  bounties     5% — task/bounty funding pool
-
-council (formerly 15%) removed entirely: governance seats now rotate
-through the 1440 Inheritance Wallets, so there is no separate standing
-council wallet to fund. Its 15% was reallocated to ubi (10%) + bounties (5%).
-"""
-const DISTRIBUTION_RATIOS = Dict(
-    "treasury" => 0.50,
-    "inheritance" => 0.25,
-    "embodiment" => 0.10,
-    "ubi" => 0.10,
-    "bounties" => 0.05
-)
+# DISTRIBUTION_RATIOS deleted (I-5 / 2026-09-27).
+# It applied a 50/25/10/10/5 revenue split at an ASE *mint* site — a rule
+# violation: 50/25/15/10 belongs only to 24-sector tithe inflow
+# (THREE_TIER_ECONOMIC_CONSTITUTION §4.6), never to emission/mint.
+# No callers existed; mint_ase_for_veil (its only consumer) is deleted below.
+# The canonical emission distribution is POOL_WEIGHTS in abci_endblock.jl.
 
 """Special wallet addresses"""
 const EMBODIMENT_POOL = "embodiment_pool_0xDEADBEEF"  # formerly obatala_shrine_0xDEADBEEF
@@ -180,93 +165,11 @@ function unlock_wallet(address::String)
     end
 end
 
-# ============================================================================
-# MINTING LOGIC
-# ============================================================================
-
-"""
-    mint_ase_for_veil(veil_id::Int, f1_score::Float64,
-                      wallet_address::String = "") -> AseVeilMinted
-
-Mint Àṣẹ based on veil F1 score with 50/25/10/10/5 distribution.
-"""
-function mint_ase_for_veil(veil_id::Int, f1_score::Float64,
-                          wallet_address::String = "")::AseVeilMinted
-
-    # Verify F1 score is in valid range
-    if f1_score < 0.0 || f1_score > 1.0
-        error("F1 score must be between 0.0 and 1.0, got $f1_score")
-    end
-
-    # Check threshold
-    if f1_score < VeilSimScorer.F1_THRESHOLD
-        # Return zero mint event
-        return AseVeilMinted(
-            veil_id, f1_score, 0.0, 0.0, 0.0, now(),
-            0.0, 0.0, 0.0, 0.0, 0.0
-        )
-    end
-
-    # Calculate reward
-    base_reward = VeilSimScorer.calculate_reward(f1_score)
-
-    # Bonus scaling by F1 score (0-1 maps to 0-100%)
-    bonus_multiplier = max(0.0, f1_score - VeilSimScorer.F1_THRESHOLD) * 2.0  # 0.1 range -> 0-0.2 bonus
-    bonus_reward = base_reward * bonus_multiplier
-
-    total_amount = base_reward + bonus_reward
-
-    # Daily mint cap enforcement (AseSupply.DAILY_MINT_CAP, 1440 Àṣẹ/day --
-    # previously defined in ase_supply.jl but never actually wired to any
-    # real minting call site; check_daily_cap/record_mint! were dead code).
-    # Clamp to remaining daily capacity rather than hard-reject, so a veil
-    # that would push the day slightly over the cap still mints whatever
-    # room is left instead of minting nothing.
-    (allowed, remaining) = check_daily_cap(DAILY_CAP_STATE, round(Int, datetime2unix(now())), total_amount)
-    if !allowed
-        total_amount = max(0.0, remaining)
-        base_reward = min(base_reward, total_amount)
-        bonus_reward = max(0.0, total_amount - base_reward)
-    end
-    if total_amount > 0.0
-        record_mint!(DAILY_CAP_STATE, round(Int, datetime2unix(now())), total_amount)
-    end
-
-    # Calculate distribution
-    treasury_amt = total_amount * DISTRIBUTION_RATIOS["treasury"]
-    inheritance_amt = total_amount * DISTRIBUTION_RATIOS["inheritance"]
-    embodiment_amt = total_amount * DISTRIBUTION_RATIOS["embodiment"]
-    ubi_amt = total_amount * DISTRIBUTION_RATIOS["ubi"]
-    bounty_amt = total_amount * DISTRIBUTION_RATIOS["bounties"]
-
-    # Create minting event
-    mint_event = AseVeilMinted(
-        veil_id,
-        f1_score,
-        base_reward,
-        bonus_reward,
-        total_amount,
-        now(),
-        treasury_amt,
-        inheritance_amt,
-        embodiment_amt,
-        ubi_amt,
-        bounty_amt
-    )
-
-    # Record minting
-    push!(MINTING_LOG, mint_event)
-
-    # Distribute Àṣẹ
-    distribute_ase_offering(mint_event, wallet_address)
-
-    # Update supply
-    GLOBAL_SUPPLY.total_minted += total_amount
-    GLOBAL_SUPPLY.circulation += total_amount
-    GLOBAL_SUPPLY.timestamp = now()
-
-    return mint_event
-end
+# mint_ase_for_veil deleted (I-5 / 2026-09-27).
+# It applied 50/25/10/10/5 at an ASE *emission* site — the rule forbids this:
+# @shrineSplit 50/25/15/10 belongs only to 24-sector tithe inflow.
+# Zero callers existed across OSOVM/Omo-Koda2/Vantage.
+# ASE emission routes through POOL_WEIGHTS in abci_endblock.jl exclusively.
 
 # ============================================================================
 # DISTRIBUTION

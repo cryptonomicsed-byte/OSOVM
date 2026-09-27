@@ -2437,9 +2437,11 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         difficulty = clamp(log(1.0 + gpu_seconds) / log(3601.0), 0.0, 1.0)
 
         # I-44/I-45: quality is not accepted from the caller (see input NOTE above).
-        # 0.0 (not 0.5) until receipt-store lookup derives quality from the verified
-        # receipt identified by receipt_hash. 0.5 is a free subsidy; 0.0 is honest:
-        # no measurement, no credit. Tracked: E-52.
+        # INERT: proof_value is a product (difficulty × quality × novelty × …).
+        # 0.0 is an absorbing element — one zero factor annihilates the whole product,
+        # so every COMPUTE_PROOF call produces proof_value=0, mint_eligible=false,
+        # dopamine_authorized=0 until receipt-store lookup lands (E-52).
+        # This is intentional: unverified work earns nothing, not 0.5 × something.
         quality = 0.0
 
         # Novelty via the ProofEngine's NoveltyLedger (per-environment deduplication)
