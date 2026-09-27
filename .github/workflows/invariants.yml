@@ -74,6 +74,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - name: Load-check oso_vm.jl
+        # Three load-breaking bugs shipped in one session before this step existed.
+        # Each would have been caught immediately on first push.  This runs before
+        # the Python gate so a broken module is reported as a load failure, not as
+        # 156 grep timeouts (I-48) or unexplained invariant noise.
+        working-directory: roots/OSOVM
+        run: |
+          julia --project=. -e 'include("src/oso_vm.jl"); println("oso_vm.jl: load OK")'
+
       - name: Run the invariant gate
         id: gate
         env:
