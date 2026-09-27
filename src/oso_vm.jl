@@ -52,7 +52,9 @@ mutable struct StakingVault
     locked_balance::Float64                  # Principal (11.11% locked)
     staked_since::Int                        # Timestamp of first stake
     last_claimed::Int                        # Last reward claim
-    accrued_rewards::Float64                 # Pending 11.11% APY rewards
+    # accrued_rewards removed — nothing writes it (I-13: all issuance routes through
+    # the emission clock); keeping a dead Float64 field left the symbol in the tree
+    # where the invariant gate could not distinguish "dead" from "live but not paying".
 end
 
 # I-41: module-level state that outlives a single request.
@@ -279,7 +281,7 @@ function create_vm(;
     ) for i in 0:1439]
     
     # Initialize 1440 staking vaults
-    vaults = [StakingVault(0.0, 0, 0, 0.0) for _ in 1:1440]
+    vaults = [StakingVault(0.0, 0, 0) for _ in 1:1440]
     
     return VMState(
         Dict{String, Float64}(),

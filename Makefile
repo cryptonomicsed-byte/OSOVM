@@ -4,9 +4,11 @@
 .PHONY: test run-example clean help
 
 # Run all tests
+# test_oso_vm.jl never existed; vm_core_test.jl is the closest analogue.
+# A full test/runtests.jl covering all 34 test files remains a TODO.
 test:
-	@echo "🔥 Running Ọ̀ṢỌ́VM test suite..."
-	julia test/test_oso_vm.jl
+	@echo "Running Ọ̀ṢỌ́VM test suite..."
+	julia test/vm_core_test.jl
 
 # Run hello world example
 run-example:

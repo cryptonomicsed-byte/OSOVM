@@ -215,7 +215,7 @@ using .OsoVM
         
         # All vaults start at 0.0 balance
         @test vm.staking_vaults[1].locked_balance == 0.0
-        @test vm.staking_vaults[1].accrued_rewards == 0.0
+        # accrued_rewards field removed (I-13) — assertion deleted
         
         # APY constant
         apy = 0.1111  # 11.11%

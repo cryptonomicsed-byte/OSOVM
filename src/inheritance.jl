@@ -1,5 +1,10 @@
 # inheritance.jl — 1440 Inheritance Wallet System
 # Sacred governance: 7×7 badge → Council of 12 → Bínò final sign
+#
+# STATUS: NOT LOADED — no include("inheritance.jl") exists in the tree.
+# accrued_rewards field and accrue_rewards() removed (I-13 parity with oso_vm.jl):
+# APY issuance must route through the emission clock.  When this module is wired
+# in, the clock integration point is claim_rewards() returning :rewards_claimed.
 
 module Inheritance
 
@@ -7,7 +12,7 @@ include("flaw_tokens.jl")
 using .FlawTokens: generate_flaw_token, verify_flaw_token
 
 export InheritanceWallet, init_1440_wallets, candidate_apply, council_approve,
-       final_sign, distribute_offering, claim_rewards, accrue_rewards, is_sabbath
+       final_sign, distribute_offering, claim_rewards, is_sabbath
 
 # 1440 Inheritance Wallet Structure
 mutable struct InheritanceWallet
@@ -18,7 +23,6 @@ mutable struct InheritanceWallet
     approvals_mask::Int           # Bitmask of council approvals (12 bits)
     next_eligible_ts::Int         # Next claim timestamp (7 years)
     locked_balance::Float64       # Principal locked (11.11% APY)
-    accrued_rewards::Float64      # Accumulated yield
     staked_since::Int             # Timestamp of first stake
     last_claimed::Int             # Last reward claim timestamp
     flaw_token::String            # Soulbound Genesis Flaw Token — the one
@@ -44,7 +48,6 @@ function init_1440_wallets(start_ts::Int=0)::Vector{InheritanceWallet}
             0,                  # approvals_mask
             start_ts,           # next_eligible_ts (immediate for first claim)
             0.0,                # locked_balance
-            0.0,                # accrued_rewards
             0,                  # staked_since
             start_ts,           # last_claimed
             generate_flaw_token(i)  # flaw_token — soulbound at birth
@@ -273,38 +276,15 @@ function distribute_offering(
     )
 end
 
-"""
-Accrue 11.11% APY rewards
-Formula: rewards = principal × 0.1111 × (time_elapsed / year)
-"""
-function accrue_rewards(wallet::InheritanceWallet, current_time::Int)::Nothing
-    if wallet.locked_balance <= 0 || wallet.staked_since == 0
-        return nothing
-    end
-
-    time_elapsed = current_time - wallet.last_claimed
-
-    if time_elapsed <= 0
-        return nothing
-    end
-
-    # 11.11% APY
-    annual_rate = 0.1111
-    seconds_per_year = 365.25 * 86400
-
-    # Calculate accrued rewards
-    time_fraction = time_elapsed / seconds_per_year
-    new_rewards = wallet.locked_balance * annual_rate * time_fraction
-
-    wallet.accrued_rewards += new_rewards
-    wallet.last_claimed = current_time
-
-    nothing
-end
+# accrue_rewards() deleted (I-13): APY issuance must route through the emission
+# clock.  The function existed here in parallel with oso_vm.jl's CLAIM_REWARDS
+# opcode; both are now removed.  The clock integration point when this module
+# is wired: wallet.last_claimed must be advanced by the clock on each payout.
 
 """
 Opcode 0x34: claimRewards
-Unlock 11.11% yield (Sabbath-aware)
+Returns :rewards_claimed => 0 until the emission clock is wired.
+The emission clock (not yet implemented) is the only authorised ASE issuance path.
 """
 function claim_rewards(
     wallet_id::Int,
@@ -329,17 +309,14 @@ function claim_rewards(
         return Dict(:success => false, :error => "not wallet owner")
     end
 
-    # Accrue latest rewards
-    accrue_rewards(w, current_time)
-
-    # Claim all accrued rewards
-    rewards = w.accrued_rewards
-    w.accrued_rewards = 0.0
+    # Advance last_claimed so repeated calls do not accumulate stale time
+    # when the emission clock is eventually wired.
+    w.last_claimed = current_time
 
     return Dict(
         :success => true,
         :wallet_id => wallet_id,
-        :rewards_claimed => rewards,
+        :rewards_claimed => 0,
         :event => "RewardsClaimed",
         :locked_balance => w.locked_balance
     )
