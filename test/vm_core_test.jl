@@ -32,21 +32,10 @@ Instr = VMCore.OsoCompiler.Instruction
         @test r1[1].data == r2[1].data
     end
 
-    @testset "IMPACT minting with rounding" begin
-        s0 = initial_state()
-        instrs = [Instr(0x11, Dict{Symbol,Any}(:ase => 5.0, :quorum => 5))]
-        blk = make_block(1, 1000000, "alice", instrs)
-
-        s1, receipts = apply_block(s0, blk)
-
-        # gross = 1.0 * 5 * 5.0 = 25.0
-        # tithe = 25.0 * 0.0369 = 0.9225
-        # net   = 25.0 - 0.9225 = 24.0775
-        @test s1.balances["alice"] ≈ 24.0775 atol=1e-6
-        @test receipts[1].data[:gross] ≈ 25.0
-        @test receipts[1].data[:tithe] ≈ 0.9225 atol=1e-6
-        @test receipts[1].status == :ok
-    end
+    # "IMPACT minting with rounding" testset deleted — opcode 0x11 removed in
+    # f75b83f (unauthorized caller-priced ASE mint). Testing deleted functionality
+    # keeps make test red; the sibling testset "Unknown opcode returns error receipt"
+    # covers the same ground from the correct direction.
 
     @testset "TRANSFER" begin
         s0 = initial_state()

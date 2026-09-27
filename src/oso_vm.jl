@@ -532,13 +532,9 @@ module FFI
         return day_of_week == 6
     end
     
-    # 11.11% APY Calculation
-    function calculate_apy_rewards(principal::Float64, seconds_staked::Int)::Float64
-        # APY = 11.11%
-        # rewards = principal * (1 + 0.1111)^(seconds/year) - principal
-        years = seconds_staked / (365.25 * 24 * 3600)
-        return principal * ((1.1111 ^ years) - 1.0)
-    end
+    # calculate_apy_rewards deleted (I-13): only caller was CLAIM_REWARDS, which
+    # was removed when the on-demand APY credit was deleted. Clock-based issuance
+    # does not belong in FFI stubs.
 end
 
 """
@@ -623,11 +619,8 @@ Gate function for TOC_MINT (0x54). Returns true only when:
 
 Fail-closed: any missing data returns false.
 
-LEGACY gate — GPU-specific.  Kept for backward compatibility with TOC_MINT (0x54)
-callers that have not yet been migrated to the generalized WorkClaim API.
-
-New code should use:
-    is_fully_verified(vm, claim::Dict) -> Bool
+Gate function for TOC_MINT (0x54). GPU-specific; called from the live COMPUTE_PROOF
+opcode. Fail-closed on any missing data.
 """
 function is_fully_verified(vm::VMState, agent_id::AbstractString, claimed_gpu_seconds::Float64)::Bool
     if claimed_gpu_seconds <= 0.0
@@ -651,106 +644,14 @@ function is_fully_verified(vm::VMState, agent_id::AbstractString, claimed_gpu_se
     return has_anchored_contribution
 end
 
-"""
-    is_fully_verified(vm, claim::Dict) -> Bool
-
-GENERALIZED gate — accepts a WorkClaim dict with any work domain.
-This is the platform-level verification function.
-
-A WorkClaim dict must contain:
-  claim_id, agent_id, device_id, domain (string), claimed_quantity (>0),
-  input_commitment (if required by domain), output_commitment (if required),
-  measurement_commitment (if required — e.g. print measurement, flight telemetry),
-  witness_receipts (array, len >= witness_policy.min_witnesses),
-  zangbeto_anchor (required for Dopamine minting).
-
-Domains:   "gpu_compute" | "simulation" | "sim_to_real" | "print_job"
-           "aerial_flight" | "ground_robot" | "sci_sim" | "spatial_capture" | "custom/*"
-
-sim_to_real receives 5x multiplier; aerial/ground/print receive 2-3x.
-See TOC_CONSTANTS.toml [bonus_ladder] for governance-configurable overrides.
-
-Fail-closed: any missing required field returns false.
-"""
-function is_fully_verified(vm::VMState, claim::Dict)::Bool
-    # Quantity must be positive
-    qty = get(claim, "claimed_quantity", 0.0)
-    if qty <= 0.0
-        return false
-    end
-
-    domain = get(claim, "domain", "")
-    agent_id = get(claim, "agent_id", "")
-
-    # Zàngbétò anchor is mandatory for all Dopamine minting
-    anchor = get(claim, "zangbeto_anchor", nothing)
-    if isnothing(anchor) || anchor == ""
-        return false
-    end
-
-    # Witness receipts
-    witnesses = get(claim, "witness_receipts", [])
-    min_w = get(get(claim, "witness_policy", Dict()), "min_witnesses", 1)
-    if length(witnesses) < min_w
-        return false
-    end
-
-    # Domain-specific evidence checks
-    ev = get(claim, "evidence", Dict())
-    if get(ev, "require_input_hash", false) && isnothing(get(claim, "input_commitment", nothing))
-        return false
-    end
-    if get(ev, "require_output_hash", false) && isnothing(get(claim, "output_commitment", nothing))
-        return false
-    end
-    # sim_to_real and print_job require measurement_commitment
-    if get(ev, "require_measurement", false) && isnothing(get(claim, "measurement_commitment", nothing))
-        return false
-    end
-
-    # For GPU domains: also check legacy toc_contributions ledger
-    if domain == "gpu_compute" || domain == ""
-        cumulative = get(vm.toc_contributions, agent_id, 0.0)
-        if cumulative < qty
-            return false
-        end
-    end
-
-    return true
-end
-
-"""
-    compute_score(claim::Dict) -> Float64
-
-Returns the weighted compute score for a verified claim.
-Score = claimed_quantity × effective_multiplier.
-Used for Dopamine allocation in TOC_MINT and EndBlock.
-
-Multipliers (governance-configurable via TOC_CONSTANTS [bonus_ladder]):
-  gpu_compute     1.0x   simulation      1.0x
-  print_job       2.0x   sci_sim         2.0x   spatial_capture 2.0x
-  aerial_flight   3.0x   ground_robot    3.0x
-  sim_to_real     5.0x   (default; governance may raise to 10x)
-"""
-function compute_score(claim::Dict)::Float64
-    if !is_fully_verified(VMState(), claim)  # pass empty vm for non-gpu domains
-        return 0.0
-    end
-    domain_multipliers = Dict(
-        "gpu_compute"     => 1.0,
-        "simulation"      => 1.0,
-        "sim_to_real"     => 5.0,
-        "print_job"       => 2.0,
-        "aerial_flight"   => 3.0,
-        "ground_robot"    => 3.0,
-        "sci_sim"         => 2.0,
-        "spatial_capture" => 2.0,
-    )
-    domain = get(claim, "domain", "gpu_compute")
-    mult = get(claim, "bonus_multiplier_override",
-               get(domain_multipliers, domain, 1.0))
-    return get(claim, "claimed_quantity", 0.0) * mult
-end
+# is_fully_verified(vm, claim::Dict) deleted (I-30/I-31/I-34):
+#   - Only caller was compute_score(claim::Dict), itself a 0-caller dead function.
+#   - The Dict overload called is_fully_verified(VMState(), claim) — passing an
+#     empty VM makes the gpu_compute toc_contributions check vacuously true for all
+#     non-GPU domains (I-34: vacuous verification).
+#   - It also accepted bonus_multiplier_override from the caller dict (I-31: caller
+#     controls the multiplier, not governance).
+# The LIVE gate is is_fully_verified(vm, agent_id, claimed_gpu_seconds) above.
 
 """
     anchor_present(anchor::String) -> Bool

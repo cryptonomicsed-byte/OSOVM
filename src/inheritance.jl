@@ -264,8 +264,9 @@ function distribute_offering(
             w.staked_since = current_time
         end
 
-        # Accrue rewards before adding new principal
-        accrue_rewards(w, current_time)
+        # accrue_rewards() deleted (I-13) — advance last_claimed so stale time
+        # does not accumulate when the emission clock is wired.
+        w.last_claimed = current_time
     end
 
     return Dict(
