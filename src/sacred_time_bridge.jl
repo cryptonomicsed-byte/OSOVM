@@ -19,7 +19,8 @@ export estimate_btc_height, format_sacred_time, active_veils_for_day, veil_align
 const BLOCKS_PER_DAY = 144
 const GENESIS_BLOCK = 780000
 const TITHE_RATE = 0.0369
-const F1_THRESHOLD = 0.777
+# F1_THRESHOLD removed — was a module-local duplicate of TOC_CONSTANTS [compute_proof]
+# scoring_threshold. Use Constants.COMPUTE_PROOF_SCORING_THRESHOLD where needed.
 
 const ORISA_NAMES = ["Esu", "Sango", "Osun", "Yemoja", "Oya", "Ogun", "Obatala"]
 

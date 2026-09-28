@@ -2512,7 +2512,7 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         else
             axis_identity = provider_id != agent_id            ? 1.0 : 0.0
             axis_operator = vm.current_sender != provider_id   ? 1.0 : 0.0
-            axis_circular = 1.0  # stub — circular supply check pending I-35
+            axis_circular = 0.0  # stub — supply-graph traversal not implemented; fail-closed (see INVARIANT_TODO E-circular)
             independence = (axis_identity + axis_operator + axis_circular) / 3.0
         end
 

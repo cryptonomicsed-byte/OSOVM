@@ -9,6 +9,9 @@ using SHA
 using Statistics
 using ..Seven
 
+include("constants.jl")
+using .Constants: COMPUTE_PROOF_SCORING_THRESHOLD
+
 export WorldTile, SimRecord, SimLibrary
 export create_tile, tile_key, tiles_in_range
 export submit_simulation, query_simulations, query_by_veil, consume_simulation
@@ -130,7 +133,7 @@ mutable struct SimLibrary
     expiry_days::Int             # Days before sim expires
 end
 
-function SimLibrary(;f1_threshold::Float64=0.777, expiry_days::Int=49)::SimLibrary
+function SimLibrary(;f1_threshold::Float64=COMPUTE_PROOF_SCORING_THRESHOLD, expiry_days::Int=49)::SimLibrary
     SimLibrary(
         Dict{String, SimRecord}(),
         Dict{String, Vector{String}}(),

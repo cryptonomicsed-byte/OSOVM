@@ -149,8 +149,11 @@ times this epoch.
 STATUS: STUB — always returns true until the epoch count ledger is wired.
 """
 function enforce_repeat_limit(sim_hash::String, epoch_count::Dict{String,Int})::Bool
-    # TODO: return get(epoch_count, sim_hash, 0) < REPEAT_LIMIT
-    return true
+    # Empty epoch_count (placeholder dict) → count = 0 → 0 < REPEAT_LIMIT → ALLOW.
+    # When the real epoch ledger is wired, a populated dict will enforce the cap.
+    # Fail-closed on the only case that matters: if sim_hash has been seen
+    # REPEAT_LIMIT or more times, deny regardless of placeholder vs. real dict.
+    return get(epoch_count, sim_hash, 0) < REPEAT_LIMIT
 end
 
 function check_sim_to_real_tier(agent_id::String, work_domain::String,

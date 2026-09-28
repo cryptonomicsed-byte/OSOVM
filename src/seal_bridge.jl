@@ -35,7 +35,7 @@
 #                        FetchKeyRequest to stdout
 #   SEAL_FETCH_CMD       shell command template with the placeholders above
 #   SEAL_KEY_SERVER_IDS  comma-separated key server object ids
-#   SEAL_THRESHOLD       e.g. "2" for 2-of-3 (default "1")
+#   SEAL_THRESHOLD       e.g. "2" for 2-of-3 (default "2"; quorum of 1 is not a quorum)
 #   SEAL_NETWORK         "testnet" | "mainnet" (default "testnet")
 
 module SealBridge
