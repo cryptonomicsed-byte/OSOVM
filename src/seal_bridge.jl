@@ -61,7 +61,7 @@ function config_from_env()::Union{SealConfig, Nothing}
     isempty(fetch_cmd_template) && return nothing
     key_server_ids = filter(!isempty, strip.(split(get(ENV, "SEAL_KEY_SERVER_IDS", ""), ",")))
     isempty(key_server_ids) && return nothing
-    threshold = get(ENV, "SEAL_THRESHOLD", "1")
+    threshold = get(ENV, "SEAL_THRESHOLD", "2")  # default ≥2: quorum of 1 is not a quorum
     network = get(ENV, "SEAL_NETWORK", "testnet")
     SealConfig(request_cmd, fetch_cmd_template, key_server_ids, threshold, network)
 end

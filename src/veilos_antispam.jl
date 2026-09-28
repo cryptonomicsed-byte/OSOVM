@@ -19,7 +19,9 @@ using .AseMinting
 using Dates, SHA, Random
 
 include("seal_bridge.jl")
+include("constants.jl")
 using .SealBridge
+using .Constants: COMPUTE_PROOF_SCORING_THRESHOLD
 
 export SimulationRequest, SimulationReceipt, AntispamWitnessVote,
        validate_simulation, create_receipt, calculate_novelty_bonus,
@@ -42,7 +44,9 @@ const PASSAGE_GATES = [
     "Èṣù" => (city="Santiago", veils_needed=7, ase_target=60.9)
 ]
 
-const F1_THRESHOLD = 0.777
+# F1_THRESHOLD is sourced from TOC_CONSTANTS.toml [compute_proof] scoring_threshold
+# via Constants.jl — not a module-local literal. This satisfies I-54.
+const F1_THRESHOLD = COMPUTE_PROOF_SCORING_THRESHOLD
 const ASE_BURN_COST = 7.0
 const WITNESS_QUORUM = 7
 const WITNESS_TOTAL = 12
@@ -260,34 +264,14 @@ end
 
 Request votes from 7 random witnesses out of 12.
 """
-function request_witness_votes(sim_id::String, citizen_id::String, 
+function request_witness_votes(sim_id::String, citizen_id::String,
                               f1_score::Float64, composition::Vector{Int})::Vector{AntispamWitnessVote}
-    
-    # Select 7 random witnesses
-    witness_ids = shuffle(1:WITNESS_TOTAL)[1:WITNESS_QUORUM]
-    votes = AntispamWitnessVote[]
-    
-    for witness_id in witness_ids
-        # Determine vote: approve if F1 >= threshold, else reject
-        vote = check_f1_threshold(f1_score)
-        
-        # Create signature (mock)
-        signature = "0x$(bytes2hex(sha256("$witness_id:$sim_id:$f1_score"))[1:32])"
-        
-        vote_record = AntispamWitnessVote(
-            witness_id,
-            citizen_id,
-            sim_id,
-            f1_score,
-            vote,
-            signature,
-            now()
-        )
-        
-        push!(votes, vote_record)
-    end
-    
-    return votes
+    # STUB — external witness network not yet implemented.
+    # Production path: broadcast sim_id + receipt_hash to the witness pool;
+    # each witness signs with its own Ed25519 keypair and returns an AntispamWitnessVote.
+    # Until that network is wired, return an empty list so verify_witness_quorum
+    # always fails — correct fail-closed behaviour rather than fabricated approval.
+    return AntispamWitnessVote[]
 end
 
 """

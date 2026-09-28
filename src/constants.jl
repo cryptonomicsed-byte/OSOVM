@@ -24,6 +24,7 @@ export TOC,
        JOB_BURN_SHARE,
        JOB_AGENT_SHARE,
        COMPUTE_PROOF_SCORING_THRESHOLD,
+       VEILSIM_SCORING_THRESHOLD,
        EXPECTED_AGENT_COUNT
 
 using TOML
@@ -66,6 +67,8 @@ function load_toc_constants()::Dict{String, Any}
                                                 data["job_payment"]["agent_dopamine"],
                 # [compute_proof]
                 "compute_proof_scoring_threshold" => data["compute_proof"]["scoring_threshold"],
+                # [veilsim]
+                "veilsim_scoring_threshold"       => data["veilsim"]["scoring_threshold"],
                 # [settlement]
                 "expected_agent_count"            => data["settlement"]["expected_agent_count"],
             )
@@ -90,6 +93,7 @@ function load_toc_constants()::Dict{String, Any}
         "job_burn_share"                  => 0.05,
         "job_agent_share"                 => 0.85,
         "compute_proof_scoring_threshold" => 0.777,
+        "veilsim_scoring_threshold"       => 0.9,
         "expected_agent_count"            => 1_000_000,
     )
 end
@@ -138,6 +142,9 @@ const JOB_AGENT_SHARE             = Float64(TOC["job_agent_share"])
 
 # [compute_proof]
 const COMPUTE_PROOF_SCORING_THRESHOLD = Float64(TOC["compute_proof_scoring_threshold"])
+
+# [veilsim]
+const VEILSIM_SCORING_THRESHOLD       = Float64(TOC["veilsim_scoring_threshold"])
 
 # [settlement]
 # Policy declaration: this many agents must each be serviceable per epoch.

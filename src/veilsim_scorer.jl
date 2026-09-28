@@ -10,9 +10,11 @@ using Dates
 
 include("veils_777.jl")
 include("veil_index.jl")
+include("constants.jl")
 
 using .Veils777
 using .VeilIndex
+using .Constants: VEILSIM_SCORING_THRESHOLD
 
 export veil_f1_score, score_veil_execution,
        should_mint_ase, veil_scoring_event, VeilScoringRecord
@@ -21,8 +23,8 @@ export veil_f1_score, score_veil_execution,
 # CONSTANTS
 # ============================================================================
 
-"""F1 score quality gate — sims below this threshold are not recorded as passing."""
-const F1_THRESHOLD = 0.9
+# F1_THRESHOLD sourced from TOC_CONSTANTS.toml [veilsim] scoring_threshold via Constants.jl (I-54)
+const F1_THRESHOLD = VEILSIM_SCORING_THRESHOLD
 
 """F1 score is tracked as percentage (0-100)"""
 const F1_SCALE = 100.0

@@ -2501,10 +2501,20 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         end
         verification = cumulative >= gpu_seconds ? 1.0 : 0.0
 
-        # Independence: 1.0 only when provider is distinct from the claimant.
-        # Self-dealing (provider_id == agent_id) or absent provider → 0.0.
-        # provider_id != agent_id is computable today from the existing args.
-        independence = (!isempty(provider_id) && provider_id != agent_id) ? 1.0 : 0.0
+        # Independence — 3-axis check (Hermes analysis 2026-09-27):
+        #   Axis 1 (identity):        provider ≠ claimant (no self-dealing)
+        #   Axis 2 (operator):        submitter ≠ provider (no proxy self-dealing via orchestrator)
+        #   Axis 3 (circular supply): stub 1.0 — supply-graph traversal not yet implemented;
+        #                             requires a funded-by DAG over agent → provider chains.
+        # Each axis contributes equally (1/3). Absent provider_id collapses all three to 0.
+        if isempty(provider_id)
+            independence = 0.0
+        else
+            axis_identity = provider_id != agent_id            ? 1.0 : 0.0
+            axis_operator = vm.current_sender != provider_id   ? 1.0 : 0.0
+            axis_circular = 1.0  # stub — circular supply check pending I-35
+            independence = (axis_identity + axis_operator + axis_circular) / 3.0
+        end
 
         # Utility: scale with gpu_seconds (capped at 8h for max utility)
         utility = clamp(gpu_seconds / (8.0 * 3600.0), 0.0, 1.0)
