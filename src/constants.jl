@@ -23,7 +23,8 @@ export TOC,
        JOB_CREATOR_SHARE,
        JOB_BURN_SHARE,
        JOB_AGENT_SHARE,
-       COMPUTE_PROOF_SCORING_THRESHOLD
+       COMPUTE_PROOF_SCORING_THRESHOLD,
+       EXPECTED_AGENT_COUNT
 
 using TOML
 
@@ -49,7 +50,7 @@ function load_toc_constants()::Dict{String, Any}
                 "ase_birth_fee"               => data["ase"]["birth_fee"],
                 # [dopamine]
                 "dopamine_daily_decay_rate"   => data["dopamine"]["idle_decay_rate"],
-                "dopamine_agent_burn_rate"    => data["dopamine"]["ase_to_dopamine"],
+                "dopamine_agent_burn_rate"    => data["dopamine"]["agent_burn_rate"],
                 # [synapse]
                 "synapse_daily_decay_rate"    => data["dopamine"]["idle_decay_rate"],
                 "synapse_conversion_ratio"    => data["synapse"]["conversion_ratio"],
@@ -65,6 +66,8 @@ function load_toc_constants()::Dict{String, Any}
                                                 data["job_payment"]["agent_dopamine"],
                 # [compute_proof]
                 "compute_proof_scoring_threshold" => data["compute_proof"]["scoring_threshold"],
+                # [settlement]
+                "expected_agent_count"            => data["settlement"]["expected_agent_count"],
             )
         end
     end
@@ -87,6 +90,7 @@ function load_toc_constants()::Dict{String, Any}
         "job_burn_share"                  => 0.05,
         "job_agent_share"                 => 0.85,
         "compute_proof_scoring_threshold" => 0.777,
+        "expected_agent_count"            => 1_000_000,
     )
 end
 
@@ -134,5 +138,11 @@ const JOB_AGENT_SHARE             = Float64(TOC["job_agent_share"])
 
 # [compute_proof]
 const COMPUTE_PROOF_SCORING_THRESHOLD = Float64(TOC["compute_proof_scoring_threshold"])
+
+# [settlement]
+# Policy declaration: this many agents must each be serviceable per epoch.
+# Per-agent epoch cap = dopamine_genesis_pool / expected_agent_count (recomputed each epoch).
+# Declared here so governance can audit and update without touching opcode logic.
+const EXPECTED_AGENT_COUNT            = TOC["expected_agent_count"]::Int
 
 end # module Constants

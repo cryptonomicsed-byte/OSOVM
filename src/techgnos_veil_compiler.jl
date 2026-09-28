@@ -489,21 +489,6 @@ function veil_compose_to_ir(compose::VeilCompose)::Dict
 end
 
 """
-    veil_score_to_ir(score::VeilScore) -> Dict
-
-Convert veil scoring to IR.
-"""
-function veil_score_to_ir(score::VeilScore)::Dict
-    return Dict(
-        "type" => "veil_score",
-        "veil_id" => score.veil_id,
-        "f1_score" => score.f1_score,
-        "opcode" => string(OpcodeVeil.OPCODE_VEIL_SCORE; base=16),
-        "reward" => score.reward_amount
-    )
-end
-
-"""
     veil_if_to_ir(conditional::VeilIf) -> Dict
 
 Convert veil conditional to IR.

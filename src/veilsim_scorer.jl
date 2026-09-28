@@ -231,61 +231,6 @@ end
 # ============================================================================
 # BATCH SCORING
 # ============================================================================
-
-"""
-    score_all_veils(results::Dict) -> Dict
-
-Score multiple veil executions.
-"""
-function score_all_veils(results::Dict)::Dict
-    scoring_summary = Dict(
-        "timestamp" => now(),
-        "total_veils_scored" => 0,
-        "veils_passing_threshold" => 0,
-        "total_ase_scored" => 0.0,
-        "average_f1" => 0.0,
-        "by_veil" => Dict(),
-        "scoring_records" => VeilScoringRecord[]
-    )
-    
-    total_f1 = 0.0
-    passing_count = 0
-    
-    for (veil_id, metrics) in results
-        if isa(metrics, VeilMetrics)
-            record = score_veil_execution(veil_id, metrics)
-            veil_scoring_event(record)
-            
-            push!(scoring_summary["scoring_records"], record)
-            
-            scoring_summary["total_veils_scored"] += 1
-            total_f1 += record.f1_score
-            
-            if should_mint_ase(record.f1_score)
-                scoring_summary["veils_passing_threshold"] += 1
-                passing_count += 1
-            end
-            
-            scoring_summary["total_ase_scored"] += record.ase_minted
-            
-            scoring_summary["by_veil"][veil_id] = Dict(
-                "f1_score" => record.f1_score,
-                "ase_minted" => record.ase_minted,
-                "precision" => record.precision,
-                "recall" => record.recall
-            )
-        end
-    end
-    
-    # Calculate averages
-    if scoring_summary["total_veils_scored"] > 0
-        scoring_summary["average_f1"] = total_f1 / scoring_summary["total_veils_scored"]
-    end
-    
-    return scoring_summary
-end
-
-# ============================================================================
 # SCORING STATISTICS
 # ============================================================================
 

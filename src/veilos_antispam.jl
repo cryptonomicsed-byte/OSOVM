@@ -21,7 +21,7 @@ using Dates, SHA, Random
 include("seal_bridge.jl")
 using .SealBridge
 
-export SimulationRequest, SimulationReceipt, WitnessVote,
+export SimulationRequest, SimulationReceipt, AntispamWitnessVote,
        validate_simulation, create_receipt, calculate_novelty_bonus,
        check_daily_cap, burn_ase, verify_witness_quorum,
        apply_tithe, check_sabbath, check_ouroboros,
@@ -63,13 +63,13 @@ struct SimulationRequest
     veil_hashes::Vector{String}
 end
 
-"""Witness node vote"""
-struct WitnessVote
+"""Witness vote used in antispam simulation (local to veilos_antispam; canonical type is ZangbetoReceipts.WitnessVote)"""
+struct AntispamWitnessVote
     witness_id::Int
     citizen_id::String
     sim_id::String
     f1_score::Float64
-    vote::Bool  # approve/reject
+    approved::Bool  # approve/reject
     signature::String
     timestamp::DateTime
 end
@@ -96,7 +96,7 @@ struct SimulationReceipt
     net_mint::Float64
     
     # Witnesses
-    witness_votes::Vector{WitnessVote}
+    witness_votes::Vector{AntispamWitnessVote}
     quorum_achieved::Bool
     
     # Proof
@@ -256,16 +256,16 @@ end
 
 """
     request_witness_votes(sim_id::String, citizen_id::String, 
-                         f1_score::Float64, composition::Vector{Int}) -> Vector{WitnessVote}
+                         f1_score::Float64, composition::Vector{Int}) -> Vector{AntispamWitnessVote}
 
 Request votes from 7 random witnesses out of 12.
 """
 function request_witness_votes(sim_id::String, citizen_id::String, 
-                              f1_score::Float64, composition::Vector{Int})::Vector{WitnessVote}
+                              f1_score::Float64, composition::Vector{Int})::Vector{AntispamWitnessVote}
     
     # Select 7 random witnesses
     witness_ids = shuffle(1:WITNESS_TOTAL)[1:WITNESS_QUORUM]
-    votes = WitnessVote[]
+    votes = AntispamWitnessVote[]
     
     for witness_id in witness_ids
         # Determine vote: approve if F1 >= threshold, else reject
@@ -274,7 +274,7 @@ function request_witness_votes(sim_id::String, citizen_id::String,
         # Create signature (mock)
         signature = "0x$(bytes2hex(sha256("$witness_id:$sim_id:$f1_score"))[1:32])"
         
-        vote_record = WitnessVote(
+        vote_record = AntispamWitnessVote(
             witness_id,
             citizen_id,
             sim_id,
@@ -291,16 +291,16 @@ function request_witness_votes(sim_id::String, citizen_id::String,
 end
 
 """
-    verify_witness_quorum(votes::Vector{WitnessVote}) -> Bool
+    verify_witness_quorum(votes::Vector{AntispamWitnessVote}) -> Bool
 
 Verify 7/12 quorum achieved with majority approval.
 """
-function verify_witness_quorum(votes::Vector{WitnessVote})::Bool
+function verify_witness_quorum(votes::Vector{AntispamWitnessVote})::Bool
     if length(votes) < WITNESS_QUORUM
         return false
     end
     
-    approved = count(v -> v.vote, votes)
+    approved = count(v -> v.approved, votes)
     # div(WITNESS_QUORUM, 2) = div(7, 2) = 3 -- that's only a plurality,
     # not the majority (4+) the comment claimed. +1 makes it a real majority.
     return approved >= div(WITNESS_QUORUM, 2) + 1  # 4+ out of 7 need to approve

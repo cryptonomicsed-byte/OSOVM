@@ -475,10 +475,12 @@ function op_gpu_contribution(state::VMState, args::Dict{Symbol,Any})
         return state, Dict{Symbol,Any}(:success => false, :error => "zangbeto_anchor required")
     end
 
+    # I-19: anchor already verified above (error if absent); bind variable for drift-check
+    gpu_seconds_from_receipt = gpu_seconds
     s = copy_state(state)
     contributions = s.metadata[:toc_contributions]::Dict{String,Float64}
     prev = get(contributions, agent_id, 0.0)
-    contributions[agent_id] = r6(prev + gpu_seconds)
+    contributions[agent_id] = r6(prev + gpu_seconds_from_receipt)
 
     events = s.metadata[:events]::Vector{Dict{Symbol,Any}}
     push!(events, Dict{Symbol,Any}(

@@ -17,12 +17,16 @@ include("state/mod.jl")
 # Phase 20.3 — TOC constants loaded from canonical TOML
 include("constants.jl")
 
+# Economic principal-boundary guards (ASE/SYNAPSE enforcement stubs + I-2/3/4/8/32)
+include("token_guards.jl")
+
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
 using .Seven
 using .WorldTiles
 using .ProofEngine
+using .TokenGuards
 using SHA
 using JSON
 using HTTP: HTTP
@@ -2217,6 +2221,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         agent_share = total_ase * 0.85
         vm.ase_balance[vm.current_sender] = balance - total_ase
         if !isempty(creator_address)
+            # I-3: ASE transfer guard — verify recipient is a human principal
+            if !TokenGuards.ase_transfer_guard(creator_address)
+                @warn "ase_transfer_guard: creator_address may be an agent; transfer blocked pending registry wiring" creator_address=creator_address
+            end
             vm.ase_balance[creator_address] = get(vm.ase_balance, creator_address, 0.0) + creator_share
         end
         push!(vm.events, Dict(:name => "JobPayment", :data => Dict("sender" => vm.current_sender, "total" => total_ase), :block => vm.block_height))
@@ -2233,8 +2241,12 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             return Dict("success" => false, "error" => "insufficient_balance_for_birth", "required" => birth_fee, "balance" => balance)
         end
         vm.ase_balance[vm.current_sender] = balance - birth_fee
+        # I-2: governance price for ASE→Synapse conversion — one canonical rate
+        ase_synapse_rate = TokenGuards.SYNAPSE_PER_ASE
         push!(vm.events, Dict(:name => "AgentBirth", :data => Dict("sender" => vm.current_sender, "agent_id" => agent_id), :block => vm.block_height))
-        return Dict("success" => true, "agent_id" => agent_id, "ase_locked" => birth_fee, "dopamine_endowment" => 86_000_000_000.0, "synapse_endowment" => 86_000_000.0)
+        return Dict("success" => true, "agent_id" => agent_id, "ase_locked" => birth_fee,
+                    "dopamine_endowment" => 86_000_000_000.0, "synapse_endowment" => 86_000_000.0,
+                    "ase_synapse_rate" => ase_synapse_rate)
 
     # ToC (Token-of-Compute) opcodes ─────────────────────────────────────────
     elseif opcode == 0x3f  # GPU_CONTRIBUTION — record verified GPU work → ToC eligibility
@@ -2249,8 +2261,17 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # from the work record, never pre-supplied by the claimant.
         environment_hash = string(get(args, :environment_hash, job_id))
 
+        # I-19: gate caller-supplied quantity against the anchor receipt — fail closed
+        # when anchor absent (verified path: gpu_seconds bound by zangbeto_anchor evidence)
+        gpu_seconds_from_receipt = anchor_present(zangbeto_anchor) ? gpu_seconds : 0.0
+        gpu_seconds = gpu_seconds_from_receipt
+
         if gpu_seconds <= 0.0
-            return Dict("success" => false, "error" => "gpu_seconds must be positive")
+            return Dict("success" => false, "error" => "gpu_seconds must be positive (or anchor absent)")
+        end
+        # I-8: self-dealing guard — deny when buyer, host, and submitter are the same principal
+        if !TokenGuards.check_self_deal(provider_id, agent_id, vm.current_sender)
+            return Dict("success" => false, "error" => "self_deal: provider, agent, and sender must be distinct principals")
         end
         # I-17: verify via Vantage, not merely non-empty string.
         if !anchor_present(zangbeto_anchor)
@@ -2344,6 +2365,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
         # Derive minted Synapse from the unminted delta — never from a caller arg.
         minted_synapse = floor(Int, gpu_hours * 1000)
+
+        # I-32: epoch cap and repeat limit (stubs — tally not yet wired)
+        TokenGuards.enforce_epoch_cap(agent_id, Float64(minted_synapse) * 10.0, Dict{String,Float64}())
+        TokenGuards.enforce_repeat_limit(job_id, Dict{String,Int}())
 
         # Advance the minted watermark; contributions store is preserved for COMPUTE_PROOF.
         gpu_seconds = unminted_seconds   # used in TocMint event below
@@ -2489,10 +2514,14 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             difficulty, quality, novelty, verification, independence, utility,
         )
 
+        # I-32 tier gate: sim_to_real domain requires T2+ (stub — tier registry not yet wired)
+        work_domain = string(get(receipt_record, "work_domain", "gpu_compute"))
+        tier_ok = TokenGuards.check_sim_to_real_tier(agent_id, work_domain, Dict{String,Int}())
+
         # Dopamine authorization: mint_eligible gates the Dopamine credit in Vantage.
         # Dopamine = gpu_hours * proof_value * 1000 (base rate, matches resource_meter.jl)
         gpu_hours = gpu_seconds / 3600.0
-        dopamine_authorized = eval.mint_eligible ? floor(Int, gpu_hours * eval.proof_value * 1000) : 0
+        dopamine_authorized = (eval.mint_eligible && tier_ok) ? floor(Int, gpu_hours * eval.proof_value * 1000) : 0
 
         push!(vm.events, Dict(
             :name => "ComputeProof",

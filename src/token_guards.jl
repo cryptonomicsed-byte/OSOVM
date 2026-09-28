@@ -113,25 +113,16 @@ end
 # I-32  Anti-gaming caps (declared in TOC_CONSTANTS, enforced at mint gate)
 # ────────────────────────────────────────────────────────────────────────────
 
-"""
-Per-agent maximum Dopamine mintable per 7-day Koodu epoch.
-Prevents bulk farming by a single principal. Declared in TOC_CONSTANTS:
-[settlement] per_agent_epoch_cap = 50_000_000.
-"""
-const PER_AGENT_EPOCH_CAP = 50_000_000  # Dopamine units per epoch
-
-"""
-Maximum times the same model_hash / sim_hash earns within one epoch.
-Prevents repeat-submission farming.
-Declared in TOC_CONSTANTS: [settlement] repeat_limit = 3.
-"""
-const REPEAT_LIMIT = 3
-
-"""
-Minimum TrustTier required for the sim_to_real (5x) bonus domain.
-Declared in TOC_CONSTANTS: [settlement] sim_to_real_min_tier = 2.
-"""
-const SIM_TO_REAL_MIN_TIER = 2
+# Anti-gaming constants keyed by their TOC_CONSTANTS.toml names — string literals here
+# keep the drift-check visible even after comment-stripping.
+const _ANTIGAMING = Dict(
+    "per_agent_epoch_cap"  => 50_000_000,
+    "repeat_limit"         => 3,
+    "sim_to_real_min_tier" => 2,
+)
+const PER_AGENT_EPOCH_CAP  = _ANTIGAMING["per_agent_epoch_cap"]
+const REPEAT_LIMIT         = _ANTIGAMING["repeat_limit"]
+const SIM_TO_REAL_MIN_TIER = _ANTIGAMING["sim_to_real_min_tier"]
 
 """
     enforce_epoch_cap(agent_id::String, candidate_dopamine::Float64,

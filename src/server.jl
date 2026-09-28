@@ -724,7 +724,7 @@ end
 
 function start(; port::Int = parse(Int, get(ENV, "OSOVM_PORT", "7780")))
     @info "ỌSỌVM HTTP server starting" port=port
-    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run  POST /ucx/preflight  POST /ucx/settle  GET /ucx/meter/:id  POST /api/toc/allowlist/check  POST /api/osovm/gpu_contribution  POST /v1/vm  POST /v1/vm/:id/execute"
+    @info "Routes: GET /health  POST /run  POST /veilsim/run  POST /ucx/preflight  POST /ucx/settle  GET /ucx/meter/:id  POST /api/toc/allowlist/check  POST /api/osovm/gpu_contribution  POST /v1/vm  POST /v1/vm/:id/execute"
     HTTP.serve(router, "0.0.0.0", port)
 end
 
