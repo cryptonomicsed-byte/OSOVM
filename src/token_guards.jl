@@ -153,14 +153,16 @@ function enforce_repeat_limit(sim_hash::String, epoch_count::Dict{String,Int})::
     return true
 end
 
-"""
-    check_sim_to_real_tier(agent_tier::Int) -> Bool
-
-Return true only when `agent_tier` meets the minimum required for the
-sim_to_real (5x) bonus domain.
-"""
-function check_sim_to_real_tier(agent_tier::Int)::Bool
+function check_sim_to_real_tier(agent_id::String, work_domain::String,
+                                tier_registry::Dict{String,Int})::Bool
+    # Non-sim_to_real domains have no tier gate.
+    work_domain == "sim_to_real" || return true
+    # Look up the agent's tier; default 0 (T0) when the registry is empty (stub).
+    agent_tier = get(tier_registry, agent_id, 0)
     return agent_tier >= SIM_TO_REAL_MIN_TIER
 end
+
+# Convenience 1-arg form retained for call sites that already know the tier.
+check_sim_to_real_tier(agent_tier::Int)::Bool = agent_tier >= SIM_TO_REAL_MIN_TIER
 
 end # module TokenGuards
