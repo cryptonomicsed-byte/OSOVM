@@ -2352,6 +2352,9 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # I-19: gpu_seconds is read from _TOC_CONTRIBUTIONS_GLOBAL (recorded by
         #        GPU_CONTRIBUTION), not from the caller.
         agent_id = string(get(args, :agent_id, ""))
+        # job_id identifies this minting request for the repeat-limit ledger.
+        # Falls back to agent_id so each agent has a stable, unique key.
+        job_id   = string(get(args, :job_id, agent_id))
 
         # Read accumulated GPU seconds from the persistent global store.
         # VMState.toc_contributions is empty on a fresh HTTP VM; the global store

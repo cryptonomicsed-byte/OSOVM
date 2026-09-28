@@ -119,9 +119,7 @@ cannot choose the credited identity by submitting an :agent body field).
 """
 function authenticate(req::HTTP.Request)
     if isempty(OSOVM_API_KEY)
-        @warn "OSOVM_API_KEY not set — authentication disabled; set in production"
-        agent_id = HTTP.header(req, "X-Agent-Id", "genesis")
-        return String(agent_id), nothing
+        return "", "OSOVM_API_KEY not configured — authentication required; set OSOVM_API_KEY env var"
     end
     auth_header = HTTP.header(req, "Authorization", "")
     if isempty(auth_header)
@@ -381,6 +379,9 @@ Returns 403 { eligible: false } when the provider is explicitly blocked.
 Open list (TOC_ALLOWLIST empty) ⇒ all providers are eligible.
 """
 function handle_toc_allowlist_check(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
     local body_obj
     try
         body_obj = JSON3.read(req.body)
@@ -434,6 +435,9 @@ the event-bridge sidecar (GPU_CONTRIBUTION → Vantage Dopamine mint).
 Returns { recorded: true, event_id: "..." }.
 """
 function handle_gpu_contribution(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
     local body_obj
     try
         body_obj = JSON3.read(req.body)
@@ -554,6 +558,9 @@ The `synapse_balance` is read from a fresh VM instance so it reflects the
 latest on-chain minted Synapse for the agent.
 """
 function handle_ucx_preflight(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
     local body_obj
     try
         body_obj = JSON3.read(req.body)
@@ -598,6 +605,9 @@ Also stops the meter session (if still open) and records the GPU contribution
 in ResourceMeter so it is eligible for the TOC_MINT cycle.
 """
 function handle_ucx_settle(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
     local body_obj
     try
         body_obj = JSON3.read(req.body)
@@ -641,6 +651,9 @@ GET /ucx/meter/:session_id
 Returns current meter reading without stopping the session.
 """
 function handle_ucx_meter_read(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
     # Extract session_id from path: /ucx/meter/<session_id>
     parts = split(req.target, '/')
     session_id = length(parts) >= 4 ? join(parts[4:end], '/') : ""
