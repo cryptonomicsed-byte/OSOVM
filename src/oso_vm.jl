@@ -75,6 +75,19 @@ const _SYNAPSE_BALANCE_GLOBAL    = Dict{String, Int}()          # agent_id → c
 # NoveltyLedger carries its own ReentrantLock — no wrapper needed.
 # Fresh per-VM ledger returns 1.0 every request; this global accumulates real counts.
 const _NOVELTY_LEDGER_GLOBAL     = ProofEngine.NoveltyLedger()
+# I-32 anti-gaming ledgers — real module-level state, NOT inline empty literals.
+# epoch_tally: agent_id → Dopamine minted this epoch (reset at epoch boundary)
+# epoch_count: sim_hash  → submission count this epoch (reset at epoch boundary)
+# Epoch reset is TODO (requires a Koodu-anchored clock); until then, counts accumulate
+# monotonically, which is conservative (caps fire earlier, never later).
+const _EPOCH_TALLY_LOCK          = ReentrantLock()
+const _EPOCH_TALLY_GLOBAL        = Dict{String, Float64}()     # agent_id → Dopamine minted this epoch
+const _EPOCH_COUNT_GLOBAL        = Dict{String, Int}()
+# _TIER_REGISTRY_GLOBAL: agent_id → trust tier (Int, 0-5).
+# Populated by Vantage agent-registration events; defaults to 0 (no tier = T0 = deny for sim_to_real).
+# Populated lazily: a REGISTER_AGENT opcode or a Vantage bridge callback writes here.
+const _TIER_REGISTRY_LOCK        = ReentrantLock()
+const _TIER_REGISTRY_GLOBAL      = Dict{String, Int}()
 
 # VM State
 mutable struct VMState
@@ -2366,9 +2379,21 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # Derive minted Synapse from the unminted delta — never from a caller arg.
         minted_synapse = floor(Int, gpu_hours * 1000)
 
-        # I-32: epoch cap and repeat limit (stubs — tally not yet wired)
-        TokenGuards.enforce_epoch_cap(agent_id, Float64(minted_synapse) * 10.0, Dict{String,Float64}())
-        TokenGuards.enforce_repeat_limit(job_id, Dict{String,Int}())
+        # I-32: read real ledger state; epoch boundary reset is TODO (see _EPOCH_*_GLOBAL).
+        epoch_tally, epoch_count = lock(_EPOCH_TALLY_LOCK) do
+            copy(_EPOCH_TALLY_GLOBAL), copy(_EPOCH_COUNT_GLOBAL)
+        end
+        candidate_dopamine = Float64(minted_synapse) * 10.0
+        capped_dopamine = TokenGuards.enforce_epoch_cap(agent_id, candidate_dopamine, epoch_tally)
+        if !TokenGuards.enforce_repeat_limit(job_id, epoch_count)
+            return Dict("success" => false,
+                        "error"   => "repeat_limit: job_id $job_id submitted ≥$(TokenGuards.REPEAT_LIMIT) times this epoch")
+        end
+        # Update ledgers with the permitted (capped) amount.
+        lock(_EPOCH_TALLY_LOCK) do
+            _EPOCH_TALLY_GLOBAL[agent_id] = get(_EPOCH_TALLY_GLOBAL, agent_id, 0.0) + capped_dopamine
+            _EPOCH_COUNT_GLOBAL[job_id]   = get(_EPOCH_COUNT_GLOBAL, job_id, 0) + 1
+        end
 
         # Advance the minted watermark; contributions store is preserved for COMPUTE_PROOF.
         gpu_seconds = unminted_seconds   # used in TocMint event below
@@ -2524,9 +2549,14 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
             difficulty, quality, novelty, verification, independence, utility,
         )
 
-        # I-32 tier gate: sim_to_real domain requires T2+ (stub — tier registry not yet wired)
-        work_domain = string(get(receipt_record, "work_domain", "gpu_compute"))
-        tier_ok = TokenGuards.check_sim_to_real_tier(agent_id, work_domain, Dict{String,Int}())
+        # I-32 tier gate: sim_to_real domain requires T2+.
+        # Reads _TIER_REGISTRY_GLOBAL (populated by Vantage bridge on agent registration).
+        # Empty registry → tier 0 → DENY for sim_to_real (correct fail-closed behaviour).
+        work_domain  = string(get(receipt_record, "work_domain", "gpu_compute"))
+        tier_registry = lock(_TIER_REGISTRY_LOCK) do
+            copy(_TIER_REGISTRY_GLOBAL)
+        end
+        tier_ok = TokenGuards.check_sim_to_real_tier(agent_id, work_domain, tier_registry)
 
         # Dopamine authorization: mint_eligible gates the Dopamine credit in Vantage.
         # Dopamine = gpu_hours * proof_value * 1000 (base rate, matches resource_meter.jl)

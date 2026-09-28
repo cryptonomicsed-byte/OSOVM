@@ -128,16 +128,17 @@ const SIM_TO_REAL_MIN_TIER = _ANTIGAMING["sim_to_real_min_tier"]
     enforce_epoch_cap(agent_id::String, candidate_dopamine::Float64,
                       epoch_tally::Dict{String,Float64}) -> Float64
 
-Clamp `candidate_dopamine` to PER_AGENT_EPOCH_CAP minus what the agent
-already minted this epoch. Returns the clamped (permitted) amount.
+Clamp `candidate_dopamine` so that agent's total this epoch does not exceed
+PER_AGENT_EPOCH_CAP. Returns the permitted (clamped) amount.
 
-STATUS: STUB — returns candidate_dopamine unchanged until the epoch
-tally ledger is wired.
+The caller must pass the real epoch tally (e.g. _EPOCH_TALLY_GLOBAL from oso_vm.jl)
+and update it after the mint with the returned value.
 """
 function enforce_epoch_cap(agent_id::String, candidate_dopamine::Float64,
                            epoch_tally::Dict{String,Float64})::Float64
-    # TODO: clamp to PER_AGENT_EPOCH_CAP - get(epoch_tally, agent_id, 0.0)
-    return candidate_dopamine
+    already_minted = get(epoch_tally, agent_id, 0.0)
+    remaining_cap  = max(0.0, Float64(PER_AGENT_EPOCH_CAP) - already_minted)
+    return min(candidate_dopamine, remaining_cap)
 end
 
 """
@@ -146,13 +147,10 @@ end
 Return false (DENY) when `sim_hash` has already been submitted REPEAT_LIMIT
 times this epoch.
 
-STATUS: STUB — always returns true until the epoch count ledger is wired.
+The caller must pass the real epoch count ledger (e.g. _EPOCH_COUNT_GLOBAL from
+oso_vm.jl) and increment it after a successful submission.
 """
 function enforce_repeat_limit(sim_hash::String, epoch_count::Dict{String,Int})::Bool
-    # Empty epoch_count (placeholder dict) → count = 0 → 0 < REPEAT_LIMIT → ALLOW.
-    # When the real epoch ledger is wired, a populated dict will enforce the cap.
-    # Fail-closed on the only case that matters: if sim_hash has been seen
-    # REPEAT_LIMIT or more times, deny regardless of placeholder vs. real dict.
     return get(epoch_count, sim_hash, 0) < REPEAT_LIMIT
 end
 

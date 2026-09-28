@@ -581,7 +581,7 @@ function validate_simulation(request::SimulationRequest, f1_score::Float64)::Tup
     
     # Layer 3: F1 Threshold
     if !check_f1_threshold(f1_score)
-        return (false, "F1 < 0.777 (need $F1_THRESHOLD)")
+        return (false, "F1 $f1_score < threshold $F1_THRESHOLD")
     end
     
     # Layer 4: Quorum (implicit in receipt creation)
