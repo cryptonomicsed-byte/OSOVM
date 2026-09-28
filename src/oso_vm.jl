@@ -88,6 +88,12 @@ const _EPOCH_COUNT_GLOBAL        = Dict{String, Int}()
 # Populated lazily: a REGISTER_AGENT opcode or a Vantage bridge callback writes here.
 const _TIER_REGISTRY_LOCK        = ReentrantLock()
 const _TIER_REGISTRY_GLOBAL      = Dict{String, Int}()
+# _AGENT_REGISTRY_GLOBAL: agent_id → true for every address confirmed to be an agent
+# principal (not a human wallet). Populated at first successful TOC_MINT — an address
+# that runs a verified-GPU compute job is by definition an agent. Used by is_agent()
+# to gate SYNAPSE peer transfers (I-4: transferable = "agent_only").
+const _AGENT_REGISTRY_LOCK       = ReentrantLock()
+const _AGENT_REGISTRY_GLOBAL     = Dict{String, Bool}()
 
 # VM State
 mutable struct VMState
@@ -2403,6 +2409,12 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         new_balance = lock(_SYNAPSE_BALANCE_LOCK) do
             prev = get(_SYNAPSE_BALANCE_GLOBAL, agent_id, 0)
             _SYNAPSE_BALANCE_GLOBAL[agent_id] = prev + minted_synapse
+        end
+        # I-4: self-register as agent on first successful mint.
+        # An address that runs verified GPU work is definitionally an agent.
+        # Subsequent SYNAPSE peer transfers gate the RECIPIENT via is_agent().
+        lock(_AGENT_REGISTRY_LOCK) do
+            _AGENT_REGISTRY_GLOBAL[agent_id] = true
         end
         # Mirror into VMState for in-process consumers
         vm.synapse_balance[agent_id] = new_balance

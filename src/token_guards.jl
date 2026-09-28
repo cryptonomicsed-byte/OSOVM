@@ -67,26 +67,28 @@ end
 # ────────────────────────────────────────────────────────────────────────────
 
 """
-    is_agent(address::String) -> Bool
+    is_agent(address::String, agent_registry::Dict{String,Bool}) -> Bool
 
 Return true when `address` is a registered agent principal (not human).
 Used to enforce agent_scope / agent_only restrictions on SYNAPSE transfers.
 
-STATUS: STUB — always returns false until the principal registry is wired.
+The caller must pass the real agent registry (e.g. _AGENT_REGISTRY_GLOBAL
+from oso_vm.jl). An empty registry means no agents are registered yet — this
+is correct fail-closed behavior for SYNAPSE transfers (new agents self-register
+on first TOC_MINT; any subsequent peer transfer then uses the populated registry).
 """
-function is_agent(address::String)::Bool
-    # TODO: query principal registry
-    return false
+function is_agent(address::String, agent_registry::Dict{String,Bool})::Bool
+    return get(agent_registry, address, false)
 end
 
 """
-    agent_only(address::String) -> Bool
+    agent_only(address::String, agent_registry::Dict{String,Bool}) -> Bool
 
 Alias for is_agent — asserts that `address` must be an agent.
-Satisfies the agent_scope invariant check.
+Satisfies the agent_scope / agent_only invariant check (I-4).
 """
-function agent_only(address::String)::Bool
-    return is_agent(address)
+function agent_only(address::String, agent_registry::Dict{String,Bool})::Bool
+    return is_agent(address, agent_registry)
 end
 
 
