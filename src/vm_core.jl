@@ -383,7 +383,7 @@ function op_agent_convert(state::VMState, args::Dict{Symbol,Any})
         :ase_burned => ase_amount,
         :agent_id => agent_id,
         :dopamine_signal => result[:dopamine_to_mint],
-        :ratio => AseSupply.ASE_TO_DOPAMINE_RATIO,
+        :ratio => AseSupply.AGENT_BURN_RATE,
     )
 end
 

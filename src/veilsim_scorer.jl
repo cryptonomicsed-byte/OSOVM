@@ -14,18 +14,15 @@ include("veil_index.jl")
 using .Veils777
 using .VeilIndex
 
-export veil_f1_score, score_veil_execution, calculate_reward,
+export veil_f1_score, score_veil_execution,
        should_mint_ase, veil_scoring_event, VeilScoringRecord
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
 
-"""F1 score threshold for Àṣẹ minting"""
+"""F1 score quality gate — sims below this threshold are not recorded as passing."""
 const F1_THRESHOLD = 0.9
-
-"""Base Àṣẹ reward for F1 >= threshold"""
-const BASE_ASE_REWARD = 5.0
 
 """F1 score is tracked as percentage (0-100)"""
 const F1_SCALE = 100.0
@@ -157,13 +154,9 @@ function score_veil_execution(veil_id::Int, metrics::VeilMetrics,
             metrics.false_negatives + metrics.true_negatives
     acc = accuracy(metrics.true_positives, metrics.true_negatives, max(total, 1))
     
-    # Calculate reward
-    ase_amount = if f1 >= F1_THRESHOLD
-        calculate_reward(f1)
-    else
-        0.0
-    end
-    
+    # ASE issuance routes through the emission clock only (I-33).
+    # ase_minted is always 0 here; the proof record feeds COMPUTE_PROOF (0x56)
+    # which mints Synapse via TOC_MINT (0x54), never ASE directly.
     return VeilScoringRecord(
         veil_id,
         now(),
@@ -172,41 +165,10 @@ function score_veil_execution(veil_id::Int, metrics::VeilMetrics,
         r,
         acc,
         metrics.execution_time,
-        ase_amount,
+        0.0,
         !isempty(wallet) ? wallet : nothing,
         "Veil $(veil.name) scored"
     )
-end
-
-"""
-    calculate_reward(f1_score::Float64) -> Float64
-
-Calculate Àṣẹ reward based on F1 score.
-Base reward (5.0) for F1 >= 0.9
-Bonuses for higher F1 scores
-"""
-function calculate_reward(f1_score::Float64)::Float64
-    if f1_score < F1_THRESHOLD
-        return 0.0
-    end
-    
-    # Base reward
-    reward = BASE_ASE_REWARD
-    
-    # Bonus tiers for higher F1
-    if f1_score >= 0.95
-        reward += 1.0  # +1.0 for F1 >= 0.95
-    end
-    
-    if f1_score >= 0.98
-        reward += 0.5  # +0.5 for F1 >= 0.98
-    end
-    
-    if f1_score >= 0.99
-        reward += 0.5  # +0.5 for F1 >= 0.99
-    end
-    
-    return reward
 end
 
 """

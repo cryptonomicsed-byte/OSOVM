@@ -14,7 +14,7 @@ export TOC,
        ASE_MICRO_PER_ASE,
        ASE_BIRTH_FEE,
        DOPAMINE_DAILY_DECAY_RATE,
-       DOPAMINE_ASE_TO_DOPAMINE,
+       DOPAMINE_AGENT_BURN_RATE,
        SYNAPSE_DAILY_DECAY_RATE,
        SYNAPSE_CONVERSION_RATIO,
        ESU_TITHE_RATE,
@@ -49,7 +49,7 @@ function load_toc_constants()::Dict{String, Any}
                 "ase_birth_fee"               => data["ase"]["birth_fee"],
                 # [dopamine]
                 "dopamine_daily_decay_rate"   => data["dopamine"]["idle_decay_rate"],
-                "dopamine_ase_to_dopamine"    => data["dopamine"]["ase_to_dopamine"],
+                "dopamine_agent_burn_rate"    => data["dopamine"]["ase_to_dopamine"],
                 # [synapse]
                 "synapse_daily_decay_rate"    => data["dopamine"]["idle_decay_rate"],
                 "synapse_conversion_ratio"    => data["synapse"]["conversion_ratio"],
@@ -77,7 +77,7 @@ function load_toc_constants()::Dict{String, Any}
         "ase_micro_per_ase"               => 1_000_000,
         "ase_birth_fee"                   => 10.0,
         "dopamine_daily_decay_rate"       => 0.01,
-        "dopamine_ase_to_dopamine"        => 10_000,
+        "dopamine_agent_burn_rate"        => 10_000,
         "synapse_daily_decay_rate"        => 0.01,
         "synapse_conversion_ratio"        => 0.1,
         "esu_tithe_rate"                  => 0.0369,
@@ -111,7 +111,7 @@ const ASE_BIRTH_FEE               = Float64(TOC["ase_birth_fee"])
 # a wrong value (genesis_seed is the ecosystem pool seed, not a per-agent endowment).
 # The live literal in AGENT_BIRTH is 86_000_000_000 (the pool) which is correct.
 const DOPAMINE_DAILY_DECAY_RATE   = Float64(TOC["dopamine_daily_decay_rate"])
-const DOPAMINE_ASE_TO_DOPAMINE    = TOC["dopamine_ase_to_dopamine"]::Int
+const DOPAMINE_AGENT_BURN_RATE    = TOC["dopamine_agent_burn_rate"]::Int
 
 # [synapse]
 # SYNAPSE_BIRTH_ENDOWMENT removed — was unused outside this file and derived

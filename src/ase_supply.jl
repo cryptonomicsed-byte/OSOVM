@@ -39,8 +39,10 @@ const JOB_PROTOCOL_BURN = 0.05
 """Default creator royalty — 10%"""
 const DEFAULT_CREATOR_ROYALTY = 0.10
 
-"""Àṣẹ to Dopamine conversion ratio — 1:10000"""
-const ASE_TO_DOPAMINE_RATIO = 10_000
+"""Agent burn rate: units of Dopamine capacity per 1 Àṣẹ burned by an agent — 1:10000.
+Named AGENT_BURN_RATE (not ase_to_dopamine) to distinguish the AGENT work-to-capacity
+path from a hypothetical human direct-purchase path; humans may never buy Dopamine directly."""
+const AGENT_BURN_RATE = 10_000
 
 """Sabbath vesting period — 7 days in seconds"""
 const SABBATH_LOCK_SECONDS = 7 * 86400
@@ -286,11 +288,11 @@ function process_job_payment(supply::SupplyState, total_ase::Float64,
     # Decision 2026-09-15: agents need spendable Àṣẹ for external costs
     #   (drone upgrades, Walrus storage, Nostr relay fees, etc.)
     ase_treasury = r6(agent_share * (ASE_AGENT_TREASURY / (ASE_AGENT_TREASURY + ASE_AGENT_DOPAMINE)))
-    ase_to_dopamine = r6(agent_share - ase_treasury)
+    agent_dopamine_burned = r6(agent_share - ase_treasury)
 
-    dopamine_signal = ase_to_dopamine * ASE_TO_DOPAMINE_RATIO
-    supply.total_converted_to_agent = r6(supply.total_converted_to_agent + ase_to_dopamine)
-    supply.total_burned = r6(supply.total_burned + ase_to_dopamine)
+    dopamine_signal = agent_dopamine_burned * AGENT_BURN_RATE
+    supply.total_converted_to_agent = r6(supply.total_converted_to_agent + agent_dopamine_burned)
+    supply.total_burned = r6(supply.total_burned + agent_dopamine_burned)
     # ase_treasury is NOT burned — it's credited to agent's spendable Àṣẹ balance
 
     return Dict{Symbol,Any}(
@@ -301,7 +303,7 @@ function process_job_payment(supply::SupplyState, total_ase::Float64,
         :creator_locked_days => 7,
         :protocol_burned => protocol_burn,
         :agent_ase_treasury => ase_treasury,    # retained as spendable Àṣẹ
-        :agent_ase_to_dopamine => ase_to_dopamine,
+        :agent_dopamine_burned => agent_dopamine_burned,
         :dopamine_signal => dopamine_signal,
         :timestamp => timestamp,
     )
@@ -324,7 +326,7 @@ function agent_convert_ase(supply::SupplyState, ase_amount::Float64, timestamp::
         return Dict{Symbol,Any}(:success => false, :error => err)
     end
 
-    dopamine_amount = r6(ase_amount * ASE_TO_DOPAMINE_RATIO)
+    dopamine_amount = r6(ase_amount * AGENT_BURN_RATE)
 
     # Burn the Àṣẹ at VM level
     supply.total_burned = r6(supply.total_burned + ase_amount)
@@ -334,7 +336,7 @@ function agent_convert_ase(supply::SupplyState, ase_amount::Float64, timestamp::
         :success => true,
         :ase_burned => ase_amount,
         :dopamine_to_mint => dopamine_amount,
-        :ratio => ASE_TO_DOPAMINE_RATIO,
+        :ratio => AGENT_BURN_RATE,
         :timestamp => timestamp,
     )
 end

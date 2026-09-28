@@ -22,9 +22,10 @@ using .CheckpointExport
 
 export ZangbetoReceipt, WitnessVote, ReceiptBundle
 export create_receipt, encode_cbor, verify_receipt
-export collect_witness_votes, check_quorum
+export request_witness_votes, check_quorum
 export generate_move_verify_call, receipt_to_anchor
 export JobReceiptBundle, create_job_receipt
+export verify_zangbeto_receipt, verify_score_signature, verify_attestation_signature
 
 # ============================================================================
 # 1. RECEIPT DATA STRUCTURES
@@ -49,6 +50,10 @@ struct ZangbetoReceipt
     f1_score::Float64
     energy_drift::Float64
     robustness::Float64
+
+    # Referent binding — the withheld artifact this score was measured against.
+    # Must be set by a non-claimant; absent → empty string (score is unfalsifiable).
+    referent_id::String
 
     # Hashes
     execution_hash::String     # SHA-256 of execution data
@@ -142,20 +147,13 @@ function create_job_receipt(spec::SimJobSpec, checkpoints::Vector{CheckpointExpo
     root = merkle_root(leaves)
     root_hex = bytes2hex(root)
 
-    # f1_score, if the job declares it, drives the same witness-approval
-    # threshold as the veil path; jobs that don't track f1_score at all
-    # (a legitimate scientific-study job might not) fall back to the
-    # lower base-approval threshold rather than crashing.
-    f1 = get(final_metrics, "f1_score", 0.0)
-
-    votes = collect_witness_votes(root_hex, f1)
+    votes = request_witness_votes(root_hex)
     quorum_met, approvals = check_quorum(votes)
     status = quorum_met ? "VERIFIED" : "QUORUM_FAILED"
 
-    # Layer 1: SHA-256 tamper-evidence commitment over the job identity
-    # and its checkpoint root together (binds the receipt to BOTH which
-    # job this is and what it actually produced).
-    seal_data = "job-seal:$jid:$root_hex:$approvals"
+    # Layer 1: SHA-256 tamper-evidence commitment bound to the job referent
+    # (the Merkle root of worker checkpoints is the withheld referent here).
+    seal_data = "job-ref:$jid:$root_hex:$approvals"
     seal = bytes2hex(sha256(seal_data))[1:32]
 
     # Layer 2 ("dual seal"): real Sui Seal consultation, when configured.
@@ -194,6 +192,7 @@ function create_receipt(
     energy_drift::Float64,
     robustness::Float64,
     trajectory_hash::String;
+    referent_id::String = "",
     block_height::Int = 0,
     chain_target::String = "sui"
 )::ZangbetoReceipt
@@ -224,6 +223,7 @@ function create_receipt(
         receipt_id, sim_id, creator_wallet, ts,
         veil_ids, opcodes, entity_count, step_count,
         f1_score, energy_drift, robustness,
+        referent_id,
         execution_hash, trajectory_hash, receipt_hash,
         block_height, chain_target
     )
@@ -355,38 +355,25 @@ end
 # 4. WITNESS QUORUM — 7/12 Deterministic Verification
 # ============================================================================
 
-"""Generic core: witness simulation over any (receipt_hash, f1_score)
-pair, independent of which receipt struct produced them. Shared by
-collect_witness_votes(::ZangbetoReceipt) and the job-receipt path
-(create_job_receipt) so both use the identical, single witness-approval
-algorithm rather than two copies drifting apart."""
-function collect_witness_votes(receipt_hash::AbstractString, f1_score::Float64)::Vector{WitnessVote}
-    votes = WitnessVote[]
+"""
+Contact the 12 independent Zàngbétò witness nodes and collect their
+signed votes over `receipt_hash`.
 
-    for w in 0:(TOTAL_WITNESSES-1)
-        # Deterministic witness hash
-        witness_data = "witness-$w-$receipt_hash"
-        witness_hash = bytes2hex(sha256(witness_data))
+STATUS: STUB — returns an empty vote list until the external witness
+network is wired. Real witnesses must be separate principals signing
+with their own Ed25519 keypairs; the approval decision must never be
+computed in-process from a claimant-supplied metric.
 
-        # Witness approves if hash starts with 0-b (75% base approval rate)
-        # High-F1 sims get higher approval (first char < 'd' = 81%)
-        threshold = f1_score >= 0.9 ? 'd' : 'c'
-        approved = witness_hash[1] < threshold
-
-        push!(votes, WitnessVote(
-            w,
-            String(receipt_hash),
-            approved,
-            witness_hash,
-            now()
-        ))
-    end
-
-    votes
+The caller should treat an empty vote list as QUORUM_FAILED.
+"""
+function request_witness_votes(receipt_hash::AbstractString)::Vector{WitnessVote}
+    # External witness nodes are not yet wired.
+    # Return empty — quorum fails until a real witness network is connected.
+    WitnessVote[]
 end
 
-collect_witness_votes(receipt::ZangbetoReceipt)::Vector{WitnessVote} =
-    collect_witness_votes(receipt.receipt_hash, receipt.f1_score)
+request_witness_votes(receipt::ZangbetoReceipt)::Vector{WitnessVote} =
+    request_witness_votes(receipt.receipt_hash)
 
 """
 Check if quorum is met (7/12 witnesses must approve).
@@ -402,7 +389,7 @@ Returns a complete ReceiptBundle.
 """
 function verify_receipt(receipt::ZangbetoReceipt)::ReceiptBundle
     # Collect witness votes
-    votes = collect_witness_votes(receipt)
+    votes = request_witness_votes(receipt)
     quorum_met, approvals = check_quorum(votes)
 
     # Determine status
@@ -412,8 +399,10 @@ function verify_receipt(receipt::ZangbetoReceipt)::ReceiptBundle
         "QUORUM_FAILED"
     end
 
-    # Layer 1: SHA-256 tamper-evidence commitment (always present)
-    seal_data = "zangbeto-seal:$(receipt.receipt_hash):$approvals"
+    # Layer 1: SHA-256 tamper-evidence commitment bound to the referent.
+    # Binds receipt identity + the withheld referent artifact + quorum count.
+    # The referent_id field must be set by a non-claimant before this is called.
+    seal_data = "zang-ref:$(receipt.referent_id):$(receipt.receipt_hash):$approvals"
     seal = bytes2hex(sha256(seal_data))[1:32]
 
     # Layer 2 ("dual seal"): real Sui Seal consultation, when configured.
@@ -567,6 +556,56 @@ function receipt_to_anchor(bundle::ReceiptBundle)::Dict{String, Any}
             "sui" => generate_move_verify_call(bundle)
         )
     )
+end
+
+
+# ============================================================================
+# 7. VERIFICATION STUBS — signature authenticity gates
+# ============================================================================
+
+"""
+    verify_zangbeto_receipt(anchor::String, pubkey::String) -> Bool
+
+Verify that `anchor` is a signed receipt from the Zàngbétò witness network,
+authenticated against `pubkey`.
+
+STATUS: STUB — always returns false until the anchor_signature_valid
+path is wired to the witness network's signing scheme. The gate
+must check cryptographic authenticity, not merely non-emptiness.
+"""
+function verify_zangbeto_receipt(anchor::String, pubkey::String)::Bool
+    # Signature verification against witness network pubkey not yet wired.
+    return false
+end
+
+"""
+    verify_score_signature(score::Dict, verifier_pubkey::String) -> Bool
+
+Verify that `score` is a signed attestation produced by an independent
+(non-claimant) verifier whose public key is `verifier_pubkey`.
+
+STATUS: STUB — always returns false until the score-attestation path
+is wired. Scores must be GIX-addressable receipts signed by the
+verifier, not numbers passed on the request.
+"""
+function verify_score_signature(score::Dict, verifier_pubkey::String)::Bool
+    # Score attestation verification not yet wired.
+    return false
+end
+
+"""
+    verify_attestation_signature(quote::String, root_ca::String) -> Bool
+
+Verify that `quote` is a TEE attestation whose signature is valid
+against `root_ca` (the vendor root certificate authority).
+
+STATUS: STUB — always returns false until SGX DCAP / TDX verification
+is wired. The gate must verify the quote signature, not just compare
+measurement fields.
+"""
+function verify_attestation_signature(quote::String, root_ca::String)::Bool
+    # TEE quote signature verification (SGX DCAP / TDX) not yet wired.
+    return false
 end
 
 end # module ZangbetoReceipts

@@ -57,8 +57,9 @@ something built inline).
      generation so a validator can verify one sampled checkpoint without
      downloading the whole job).
    - Runs the existing witness-quorum simulation (7/12,
-     `collect_witness_votes`/`check_quorum` — now generic, shared with
-     the original VeilSim receipt path).
+     `request_witness_votes`/`check_quorum` — stub returning empty votes
+     until the external witness network is wired; quorum always fails
+     in this state, matching the original VeilSim receipt path).
    - Applies the **dual seal**: SHA-256 tamper-evidence commitment
      (Layer 1) + a real Sui Seal DEK fingerprint (Layer 2, via
      `src/seal_bridge.jl`) when `SEAL_*` env vars are configured,
