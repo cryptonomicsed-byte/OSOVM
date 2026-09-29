@@ -4,13 +4,18 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/user/OSOVM
-ExecStart=/usr/bin/julia --project=. src/server_main.jl
+# Production deploys to /opt/ares/OSOVM; adjust for your environment.
+WorkingDirectory=/opt/ares/OSOVM
+# julia path varies by install; production uses /usr/local/bin/julia.
+# Find yours with: which julia
+ExecStart=/usr/local/bin/julia --project=. src/server.jl 7780
 Restart=on-failure
 Environment=OSOVM_PORT=7780
 # REQUIRED: set OSOVM_API_KEY before starting.  Without it every authenticated
 # route returns 401.  Generate once and store in the EnvironmentFile:
+#   sudo mkdir -p /etc/osovm
 #   openssl rand -hex 32 | sudo tee /etc/osovm/env
+# Then uncomment:
 # EnvironmentFile=/etc/osovm/env
 
 [Install]
