@@ -71,7 +71,7 @@ _convert_val(v::JSON3.Array)  = [_convert_val(x) for x in v]
 _convert_val(v)               = v
 
 """Serialise receipts to plain dicts for JSON response."""
-function receipt_to_dict(r::OsoCompiler.Instruction)
+function receipt_to_dict(r::OsoVM.OsoCompiler.Instruction)
     Dict{String,Any}(
         "opcode" => Int(r.opcode),
         "args"   => Dict(string(k) => v for (k, v) in r.args),
@@ -81,6 +81,11 @@ end
 # OsoVM.VMState receipts are Strings (hashes), not Instruction structs.
 receipts_to_list(v::Vector{String}) = v
 receipts_to_list(v)                 = collect(string.(v))
+
+# HTTP.jl hands the handler a BytesBody (HTTP.Messages.BytesBody), not the
+# raw Vector{UInt8}; JSON3.read has no method for it, which makes every POST
+# fail with a MethodError. Coerce once here rather than at each call site.
+_req_body_bytes(req::HTTP.Request) = Vector{UInt8}(req.body)
 
 """JSON 500 error helper."""
 function error_response(run_id::String, msg::String)
@@ -176,7 +181,7 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
@@ -277,7 +282,7 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
@@ -384,7 +389,7 @@ function handle_toc_allowlist_check(req::HTTP.Request)::HTTP.Response
 
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
@@ -440,7 +445,7 @@ function handle_gpu_contribution(req::HTTP.Request)::HTTP.Response
 
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
@@ -563,7 +568,7 @@ function handle_ucx_preflight(req::HTTP.Request)::HTTP.Response
 
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
@@ -610,7 +615,7 @@ function handle_ucx_settle(req::HTTP.Request)::HTTP.Response
 
     local body_obj
     try
-        body_obj = JSON3.read(req.body)
+        body_obj = JSON3.read(_req_body_bytes(req))
     catch e
         return bad_request("invalid JSON body: $(e)")
     end
