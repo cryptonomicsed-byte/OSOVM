@@ -48,18 +48,17 @@ end
 # ────────────────────────────────────────────────────────────────────────────
 
 """
-    ase_transfer_guard(recipient::String) -> Bool
+    ase_transfer_guard(recipient::String, agent_registry::Dict{String,Bool}=Dict{String,Bool}()) -> Bool
 
-Return true only when `recipient` is a human principal.
+Return true only when `recipient` is a human principal (not a registered agent).
 ASE must never be transferred to an agent address; agents hold only SYNAPSE.
 
-STATUS: STUB — always returns true (fail-open) until a principal
-registry (human vs. agent) is available. When wired, this should call
-`!is_agent(recipient)`.
+Pass `_AGENT_REGISTRY_GLOBAL` from oso_vm.jl at every call site. An empty registry
+is fail-open (returns true) — new agents self-register on first TOC_MINT, so the
+registry is populated before any meaningful ASE transfer occurs.
 """
-function ase_transfer_guard(recipient::String)::Bool
-    # TODO: return !is_agent(recipient) once principal registry is wired
-    return true
+function ase_transfer_guard(recipient::String, agent_registry::Dict{String,Bool}=Dict{String,Bool}())::Bool
+    return !is_agent(recipient, agent_registry)
 end
 
 # ────────────────────────────────────────────────────────────────────────────

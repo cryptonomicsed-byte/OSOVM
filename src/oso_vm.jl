@@ -2240,9 +2240,10 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         agent_share = total_ase * 0.85
         vm.ase_balance[vm.current_sender] = balance - total_ase
         if !isempty(creator_address)
-            # I-3: ASE transfer guard — verify recipient is a human principal
-            if !TokenGuards.ase_transfer_guard(creator_address)
-                @warn "ase_transfer_guard: creator_address may be an agent; transfer blocked pending registry wiring" creator_address=creator_address
+            # I-3: ASE transfer guard — block if recipient is a registered agent
+            if !TokenGuards.ase_transfer_guard(creator_address, _AGENT_REGISTRY_GLOBAL)
+                @warn "ase_transfer_guard: blocked ASE transfer to agent principal" creator_address=creator_address
+                return Dict("success" => false, "error" => "ASE transfer blocked: recipient is a registered agent (agents hold Synapse, not ASE)")
             end
             vm.ase_balance[creator_address] = get(vm.ase_balance, creator_address, 0.0) + creator_share
         end
