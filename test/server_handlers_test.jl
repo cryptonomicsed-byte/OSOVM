@@ -21,7 +21,7 @@ using .OsoVMServer: handle_health, handle_run, handle_veilsim_run,
                     handle_toc_allowlist_check, handle_gpu_contribution,
                     handle_v1_vm_create, handle_v1_vm_execute,
                     handle_ucx_preflight, handle_ucx_settle, handle_ucx_meter_read,
-                    handle_tier_update
+                    handle_tier_update, handle_tier_sync
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +106,24 @@ end
         r = handle_tier_update(_req("POST", "/v1/tier-update",
             """{"agent_id":"x","tier":9}"""))
         @test r.status == 400
+    end
+
+    @testset "handle_tier_sync — bulk snapshot populates registry" begin
+        payload = JSON3.write([
+            Dict("agent_id" => "agent-a", "tier" => 1),
+            Dict("agent_id" => "agent-b", "tier" => 3),
+        ])
+        r = handle_tier_sync(_req("POST", "/v1/tier-sync", payload))
+        @test r.status == 200
+        body = JSON3.read(String(r.body))
+        @test body["count"] == 2
+    end
+
+    @testset "handle_tier_sync — empty array returns count 0" begin
+        r = handle_tier_sync(_req("POST", "/v1/tier-sync", "[]"))
+        @test r.status == 200
+        body = JSON3.read(String(r.body))
+        @test body["count"] == 0
     end
 
 end
