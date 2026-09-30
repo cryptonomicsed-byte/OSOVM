@@ -30,7 +30,7 @@ export start,
        handle_toc_allowlist_check, handle_gpu_contribution,
        handle_v1_vm_create, handle_v1_vm_execute,
        handle_ucx_preflight, handle_ucx_settle, handle_ucx_meter_read,
-       handle_tier_update
+       handle_tier_update, handle_tier_sync
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -674,6 +674,55 @@ function handle_ucx_meter_read(req::HTTP.Request)::HTTP.Response
 end
 
 """
+POST /v1/tier-sync
+Body: [{agent_id: str, tier: int}, ...]   (array, max 10_000 entries)
+Auth: Bearer OSOVM_API_KEY
+
+Bulk-replaces _TIER_REGISTRY_GLOBAL with the supplied snapshot.
+Called by Vantage on startup to warm the registry after an OSOVM process
+restart. Replaces, not merges — stale entries from the previous process
+are cleared.
+
+Returns: {status:"ok", count: N}
+"""
+function handle_tier_sync(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
+    body_obj = parse_json_body(req)
+    body_obj === nothing && return bad_request("invalid JSON — expected array [{agent_id,tier}]")
+
+    # Accept either a bare array or {entries: [...]}
+    entries = if body_obj isa AbstractVector
+        body_obj
+    elseif haskey(body_obj, :entries)
+        body_obj[:entries]
+    else
+        return bad_request("body must be a JSON array or {\"entries\": [...]}")
+    end
+
+    length(entries) > 10_000 && return bad_request("batch too large (max 10,000)")
+
+    new_reg = Dict{String, Int}()
+    for item in entries
+        aid = get(item, :agent_id, nothing)
+        t   = get(item, :tier, nothing)
+        aid === nothing || isempty(string(aid)) && continue
+        t === nothing && continue
+        t_int = try Int(t) catch; continue end
+        (t_int < 0 || t_int > 5) && continue
+        new_reg[string(aid)] = t_int
+    end
+
+    lock(_TIER_REGISTRY_LOCK) do
+        empty!(_TIER_REGISTRY_GLOBAL)
+        merge!(_TIER_REGISTRY_GLOBAL, new_reg)
+    end
+
+    return json_ok(Dict{String,Any}("count" => length(new_reg)))
+end
+
+"""
 POST /v1/tier-update
 Body: {agent_id: str, tier: int (0-5)}
 Auth: Bearer OSOVM_API_KEY
@@ -765,6 +814,9 @@ function router(req::HTTP.Request)::HTTP.Response
         # ── Vantage tier-push bridge ─────────────────────────────────────────
         elseif target == "/v1/tier-update" && method == "POST"
             return handle_tier_update(req)
+
+        elseif target == "/v1/tier-sync" && method == "POST"
+            return handle_tier_sync(req)
 
         # ── v1/health alias ───────────────────────────────────────────────────
         elseif target == "/v1/health" && method == "GET"
