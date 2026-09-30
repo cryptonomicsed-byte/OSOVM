@@ -9,7 +9,9 @@ export OPCODE_MAP, CORE_ATTRIBUTES, EXPANSION_ATTRIBUTES, get_opcode, is_core
 const CORE_OPCODES = Dict{Symbol, UInt8}(
     :HALT           => 0x00,  # Stop execution
     :NOOP           => 0x01,  # No operation
-    :IMPACT         => 0x11,  # @impact - Mint Aṣẹ from work
+    # 0x11 (IMPACT) removed — was a caller-priced ASE mint (I-12/I-13 violation).
+    # Handler in oso_vm.jl explicitly rejects this opcode. Entry removed to prevent
+    # tooling from treating it as a supported opcode.
     :VEIL           => 0x12,  # @veil - VeilSim calculation
     :TITHE          => 0x27,  # @tithe - AIO 3.69% split
     :RECEIPT        => 0x1f,  # @receipt - Immutable proof
