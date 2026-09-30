@@ -122,6 +122,15 @@ const _ANTIGAMING = Dict(
     "repeat_limit"         => 3,
     "sim_to_real_min_tier" => 2,
 )
+# NOTE (OUTSTANDING §2.1A): _EPOCH_TALLY_GLOBAL in oso_vm.jl is never reset — there is no
+# epoch boundary rollover yet (oso_vm.jl has "epoch boundary reset is TODO").  This constant
+# is therefore a LIFETIME cap in practice, not a per-epoch cap.
+# Decision required: implement rollover, or rename the constant and say so in TOC_CONSTANTS.
+#
+# NOTE (OUTSTANDING §2.1B): This cap (50M Dopamine) is 581× larger than the declared policy
+# number (genesis_seed ÷ expected_agent_count = 86B ÷ 1M = 86,000 Dopamine/epoch).
+# When epoch rollover is implemented, derive this from EXPECTED_AGENT_COUNT:
+#   PER_AGENT_EPOCH_CAP = Constants.TOC["dopamine"]["genesis_seed"] ÷ Constants.EXPECTED_AGENT_COUNT
 const PER_AGENT_EPOCH_CAP  = _ANTIGAMING["per_agent_epoch_cap"]
 const REPEAT_LIMIT         = _ANTIGAMING["repeat_limit"]
 const SIM_TO_REAL_MIN_TIER = _ANTIGAMING["sim_to_real_min_tier"]
@@ -133,8 +142,9 @@ const SIM_TO_REAL_MIN_TIER = _ANTIGAMING["sim_to_real_min_tier"]
 Clamp `candidate_dopamine` so that agent's total this epoch does not exceed
 PER_AGENT_EPOCH_CAP. Returns the permitted (clamped) amount.
 
-The caller must pass the real epoch tally (e.g. _EPOCH_TALLY_GLOBAL from oso_vm.jl)
-and update it after the mint with the returned value.
+See NOTE above: this is currently a lifetime cap because epoch rollover is not
+yet implemented.  The caller must pass the real epoch tally (e.g.
+_EPOCH_TALLY_GLOBAL from oso_vm.jl) and update it after the mint.
 """
 function enforce_epoch_cap(agent_id::String, candidate_dopamine::Float64,
                            epoch_tally::Dict{String,Float64})::Float64

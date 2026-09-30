@@ -3,13 +3,11 @@
 
 .PHONY: test run-example clean help
 
-# Run all tests
-# vm_core_test.jl covers opcode logic; server_handlers_test.jl covers HTTP handler layer.
-# A full test/runtests.jl covering all 34 test files remains a TODO.
+# Run full test suite via runtests.jl (spawns each file as its own subprocess)
+# Pass 'fast' to skip benchmarks: make test ARGS=fast
 test:
 	@echo "Running Ọ̀ṢỌ́VM test suite..."
-	julia test/vm_core_test.jl
-	julia test/server_handlers_test.jl
+	julia --project=. test/runtests.jl $(ARGS)
 
 # Run hello world example
 run-example:

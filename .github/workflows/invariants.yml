@@ -94,6 +94,16 @@ jobs:
         run: |
           julia --project=. -e 'include("src/oso_vm.jl"); println("oso_vm.jl: load OK")'
 
+      - name: Run Julia test suite
+        # runtests.jl spawns each test file as its own subprocess (module
+        # re-definitions are fatal in a shared process).  Determinism tests have
+        # their own arm-determinism.yml job; network tests are skipped offline.
+        working-directory: roots/OSOVM
+        env:
+          SKIP_DETERMINISM: "true"
+        run: |
+          julia --project=. test/runtests.jl offline
+
       - name: Run the invariant gate
         id: gate
         env:
