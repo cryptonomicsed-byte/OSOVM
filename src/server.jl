@@ -25,7 +25,12 @@ using SHA
 using Dates
 using UUIDs
 
-export start
+export start,
+       handle_health, handle_run, handle_veilsim_run,
+       handle_toc_allowlist_check, handle_gpu_contribution,
+       handle_v1_vm_create, handle_v1_vm_execute,
+       handle_ucx_preflight, handle_ucx_settle, handle_ucx_meter_read,
+       handle_tier_update
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -668,6 +673,48 @@ function handle_ucx_meter_read(req::HTTP.Request)::HTTP.Response
     return json_ok(reading)
 end
 
+"""
+POST /v1/tier-update
+Body: {agent_id: str, tier: int (0-5)}
+Auth: Bearer OSOVM_API_KEY
+
+Populates _TIER_REGISTRY_GLOBAL so the sim_to_real tier gate can evaluate
+trust tier without a live Vantage query. Called by Vantage whenever an agent's
+tier changes (registration, promotion, or demotion).
+
+Returns: {status:"ok", agent_id, tier}
+"""
+function handle_tier_update(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+
+    body_obj = parse_json_body(req)
+    body_obj === nothing && return bad_request("invalid JSON")
+
+    agent_id = get(body_obj, :agent_id, nothing)
+    tier_val  = get(body_obj, :tier, nothing)
+
+    (agent_id === nothing || isempty(string(agent_id))) && return bad_request("agent_id required")
+    tier_val === nothing && return bad_request("tier required")
+
+    tier_int = try
+        t = Int(tier_val)
+        (t < 0 || t > 5) && return bad_request("tier must be 0–5")
+        t
+    catch
+        return bad_request("tier must be an integer 0–5")
+    end
+
+    lock(_TIER_REGISTRY_LOCK) do
+        _TIER_REGISTRY_GLOBAL[string(agent_id)] = tier_int
+    end
+
+    return json_ok(Dict{String,Any}(
+        "agent_id" => string(agent_id),
+        "tier"     => tier_int,
+    ))
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -714,6 +761,10 @@ function router(req::HTTP.Request)::HTTP.Response
             # parts = ["", "v1", "vm", "<vm_id>", "execute"]
             vm_id = length(parts) >= 5 ? parts[4] : "unknown"
             return handle_v1_vm_execute(req, vm_id)
+
+        # ── Vantage tier-push bridge ─────────────────────────────────────────
+        elseif target == "/v1/tier-update" && method == "POST"
+            return handle_tier_update(req)
 
         # ── v1/health alias ───────────────────────────────────────────────────
         elseif target == "/v1/health" && method == "GET"

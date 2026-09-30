@@ -16,11 +16,12 @@ using Test
 using HTTP
 
 include(joinpath(@__DIR__, "..", "src", "server.jl"))
-using .OsoServer: handle_health, handle_run, handle_veilsim_run,
-                  handle_toc_allowlist_check, handle_gpu_contribution,
-                  handle_v1_vm_create, handle_v1_vm_execute,
-                  handle_ucx_preflight, handle_ucx_settle, handle_ucx_meter_read,
-                  handle_v
+# Module name is OsoVMServer (the file ends with `end # module OsoVMServer`).
+using .OsoVMServer: handle_health, handle_run, handle_veilsim_run,
+                    handle_toc_allowlist_check, handle_gpu_contribution,
+                    handle_v1_vm_create, handle_v1_vm_execute,
+                    handle_ucx_preflight, handle_ucx_settle, handle_ucx_meter_read,
+                    handle_tier_update
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,11 +40,6 @@ end
 
     @testset "handle_health" begin
         r = handle_health(_req("GET", "/health"))
-        @test r.status == 200
-    end
-
-    @testset "handle_v" begin
-        r = handle_v(_req("GET", "/v"))
         @test r.status == 200
     end
 
@@ -90,6 +86,26 @@ end
     @testset "handle_ucx_meter_read — missing fields returns 400" begin
         r = handle_ucx_meter_read(_req("GET", "/ucx/meter"))
         @test r.status in (400, 200)
+    end
+
+    @testset "handle_tier_update — valid tier updates registry" begin
+        r = handle_tier_update(_req("POST", "/v1/tier-update",
+            """{"agent_id":"test-agent-1","tier":2}"""))
+        @test r.status == 200
+        body = JSON3.read(String(r.body))
+        @test body["tier"] == 2
+        @test body["agent_id"] == "test-agent-1"
+    end
+
+    @testset "handle_tier_update — missing agent_id returns 400" begin
+        r = handle_tier_update(_req("POST", "/v1/tier-update", """{"tier":1}"""))
+        @test r.status == 400
+    end
+
+    @testset "handle_tier_update — out-of-range tier returns 400" begin
+        r = handle_tier_update(_req("POST", "/v1/tier-update",
+            """{"agent_id":"x","tier":9}"""))
+        @test r.status == 400
     end
 
 end
