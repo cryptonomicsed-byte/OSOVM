@@ -37,6 +37,13 @@ module techgnosis::elegbara_router {
     const BIRTH_INHERITANCE_BPS: u64 = 2000;
     // performance pool takes the remainder.
 
+    // Job settlement split (of post-tax net, in BPS)
+    const AGENT_SHARE_BPS: u64 = 1500;      // 15% — operational wallet, sized to survival cost
+    const BIRTHER_GEN0_BPS: u64 = 2000;     // 20% — direct child
+    const BIRTHER_GEN1_BPS: u64 = 1500;     // 15% — grandchild
+    const BIRTHER_GEN2_BPS: u64 = 1000;     // 10% — great-grandchild and deeper
+    // Ecosystem (remainder after agent + birther) goes back to the 8 pools via route_distribution
+
     // ===== Errors =====
     const E_ZERO_AMOUNT: u64 = 105;
     const E_NOT_ADMIN: u64 = 101;
@@ -61,6 +68,24 @@ module techgnosis::elegbara_router {
         to_elegbara: u64,
         to_inheritance: u64,
         to_performance: u64,
+    }
+
+    /// Immutable royalty claim. Created at agent birth, stored on-chain, never altered.
+    public struct BirthRecord has key, store {
+        id: UID,
+        agent_addr: address,
+        birther_addr: address,
+        royalty_bps: u64,   // set at birth: 2000 | 1500 | 1000 for gen 0/1/2+
+        generation: u8,
+    }
+
+    public struct JobSettled has copy, drop {
+        agent_addr: address,
+        gross: u64,
+        esu_tax: u64,
+        birther_royalty: u64,
+        ecosystem_share: u64,
+        agent_amount: u64,
     }
 
     // ===== Router (generic over the stablecoin T) =====
@@ -168,12 +193,90 @@ module techgnosis::elegbara_router {
         distribute_balance(router, coin::into_balance(coin));
     }
 
+    // ===== BirthRecord helpers =====
+
+    /// Return the royalty BPS for a given generation depth.
+    public fun royalty_bps_for_generation(gen: u8): u64 {
+        if (gen == 0) { BIRTHER_GEN0_BPS }
+        else if (gen == 1) { BIRTHER_GEN1_BPS }
+        else { BIRTHER_GEN2_BPS }
+    }
+
+    /// Create and return an immutable BirthRecord. Call from process_agent_birth.
+    public fun create_birth_record(
+        agent_addr: address,
+        birther_addr: address,
+        generation: u8,
+        ctx: &mut TxContext,
+    ): BirthRecord {
+        BirthRecord {
+            id: object::new(ctx),
+            agent_addr,
+            birther_addr,
+            royalty_bps: royalty_bps_for_generation(generation),
+            generation,
+        }
+    }
+
+    /// Full job-payment settlement:
+    ///   Step 1: extract 3.69% Èṣù tax → 8 sub-wallets (existing route_transaction_tax)
+    ///   Step 2: from the net, split:
+    ///           - birther royalty (per BirthRecord.royalty_bps, gen 0/1/2+ = 20/15/10%)
+    ///           - agent operational (AGENT_SHARE_BPS = 15%)
+    ///           - ecosystem remainder (60-65%) → route_distribution → 8 sub-wallets
+    ///   Returns (birther_coin, agent_coin). Caller transfers birther_coin to record.birther_addr
+    ///   and agent_coin to the agent's operational wallet.
+    public fun settle_job_payment<T>(
+        router: &mut ElegbaraRouter<T>,
+        record: &BirthRecord,
+        payment: Coin<T>,
+        ctx: &mut TxContext,
+    ): (Coin<T>, Coin<T>) {
+        let gross = coin::value(&payment);
+        assert!(gross > 0, E_ZERO_AMOUNT);
+
+        // Step 1: tithe — routes 3.69% to 8 pools, returns ~96.31% net
+        let net_coin = route_transaction_tax(router, payment, ctx);
+        let net = coin::value(&net_coin);
+
+        // Step 2: split net into birther + agent + ecosystem
+        let birther_amt = (net * record.royalty_bps) / BPS_DENOM;
+        let agent_amt = (net * AGENT_SHARE_BPS) / BPS_DENOM;
+        let ecosystem_amt = net - birther_amt - agent_amt;
+
+        let mut net_bal = coin::into_balance(net_coin);
+        let birther_bal = balance::split(&mut net_bal, birther_amt);
+        let agent_bal = balance::split(&mut net_bal, agent_amt);
+        // remaining balance = ecosystem_amt (rounding dust included)
+        let ecosystem_bal = net_bal;
+
+        // Route ecosystem share back to the 8 sub-wallets
+        distribute_balance(router, ecosystem_bal);
+
+        event::emit(JobSettled {
+            agent_addr: record.agent_addr,
+            gross,
+            esu_tax: (gross * ESU_TAX_BPS) / BPS_DENOM,
+            birther_royalty: birther_amt,
+            ecosystem_share: ecosystem_amt,
+            agent_amount: agent_amt,
+        });
+
+        (
+            coin::from_balance(birther_bal, ctx),
+            coin::from_balance(agent_bal, ctx),
+        )
+    }
+
     // ===== Agent birth (fee paid in T) =====
     public fun process_agent_birth<T>(
         router: &mut ElegbaraRouter<T>,
         payment: Coin<T>,
         agent_id: address,
-    ) {
+        birther_addr: address,
+        generation: u8,
+        ctx: &mut TxContext,
+    ): BirthRecord {
         let paid = coin::value(&payment);
         assert!(paid > 0, E_ZERO_AMOUNT);
         let mut bal = coin::into_balance(payment);
@@ -194,6 +297,8 @@ module techgnosis::elegbara_router {
             agent_id, fee_paid: paid, burned: burn_amt, to_elegbara: elegbara_amt,
             to_inheritance: inheritance_amt, to_performance: performance_amt,
         });
+
+        create_birth_record(agent_id, birther_addr, generation, ctx)
     }
 
     // ===== Admin withdraw from a sub-wallet (governance uses this to disburse) =====
@@ -212,4 +317,10 @@ module techgnosis::elegbara_router {
     public fun reserve_balance<T>(r: &ElegbaraRouter<T>): u64 { balance::value(&r.reserve) }
     public fun ubi_balance<T>(r: &ElegbaraRouter<T>): u64 { balance::value(&r.ubi) }
     public fun esu_tax_bps(): u64 { ESU_TAX_BPS }
+
+    // ===== BirthRecord getters =====
+    public fun birth_record_agent_addr(r: &BirthRecord): address { r.agent_addr }
+    public fun birth_record_birther_addr(r: &BirthRecord): address { r.birther_addr }
+    public fun birth_record_royalty_bps(r: &BirthRecord): u64 { r.royalty_bps }
+    public fun birth_record_generation(r: &BirthRecord): u8 { r.generation }
 }
