@@ -4,7 +4,7 @@ VeilSim API Server
 Bridges the web UI to Julia veil execution, scoring, and Àṣẹ minting systems.
 """
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, abort
 from flask_cors import CORS
 import subprocess
 import json
@@ -13,7 +13,29 @@ from datetime import datetime
 from pathlib import Path
 
 app = Flask(__name__)
-CORS(app)
+# Wildcard CORS + a key-holding mint bridge = drive-by origin calls.
+CORS(app, resources={r"/api/*": {"origins": ["http://127.0.0.1:8000"]}})
+
+# Server-to-server auth, same contract as src/server.jl (I-38/I-39).
+# Token format: Authorization: Bearer <api_key>|<agent_id>
+API_KEY = os.environ.get("OSOVM_API_KEY", "")
+
+
+@app.before_request
+def _auth():
+    if request.path == "/api/health":
+        return
+    if not API_KEY:
+        abort(503, "OSOVM_API_KEY not configured - authentication required")
+    header = request.headers.get("Authorization", "")
+    if not header.lower().startswith("bearer "):
+        abort(401, "missing Authorization header")
+    token = header[7:].strip()
+    if "|" not in token:
+        abort(401, "invalid token format: expected <api_key>|<agent_id>")
+    key, _agent = token.split("|", 1)
+    if key != API_KEY:
+        abort(401, "invalid API key")
 
 # Configuration
 OSOVM_PATH = Path("/data/data/com.termux/files/home/osovm")
@@ -111,7 +133,9 @@ def search_veils():
             include("{SRC_PATH}/veil_index.jl")
             using .Veils777, .VeilIndex
             
-            results = search_veils("{query}")
+            # json.dumps() emits a double-quoted, backslash-escaped string,
+            # which is a valid Julia string literal — closes the injection sink.
+            results = search_veils(json.dumps(query))
             veils = []
             for veil in results
                 push!(veils, Dict(
@@ -170,6 +194,9 @@ def simulate():
     
     if not composition or len(composition) == 0:
         return jsonify({"success": False, "error": "Empty composition"}), 400
+    if not isinstance(composition, list) or not all(isinstance(v, int) for v in composition):
+        return jsonify({"success": False,
+                        "error": "composition must be a list of veil IDs"}), 400
     
     try:
         simulation_counter += 1
@@ -185,8 +212,8 @@ def simulate():
         using .Veils777, .VeilIndex, .VeilSimScorer, .AseMinting
         using JSON
         
-        composition = {composition}
-        wallet_addr = "{wallet}"
+        composition = json.dumps(composition)
+        wallet_addr = json.dumps(wallet)
         
         # Execute each veil and collect metrics
         results = Dict()
@@ -328,7 +355,7 @@ def get_wallet_info(wallet_addr):
             include("{SRC_PATH}/ase_minting.jl")
             using .AseMinting, JSON
             
-            info = get_wallet_info("{wallet_addr}")
+            info = get_wallet_info(json.dumps(wallet_addr))
             println(JSON.json(info))
             """
         ], capture_output=True, text=True, timeout=5)
@@ -440,4 +467,4 @@ if __name__ == '__main__':
     print("Documentation: http://localhost:5555/docs")
     print()
     
-    app.run(host='0.0.0.0', port=5555, debug=True)
+    app.run(host='127.0.0.1', port=5555, debug=False)

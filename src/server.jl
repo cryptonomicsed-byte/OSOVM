@@ -96,6 +96,56 @@ end
 json_ok(payload) = HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(payload))
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AUTHENTICATION  (I-38 / I-39) — restored after the 8b88bca rewrite deleted it
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared secret for server-to-server calls.  Set OSOVM_API_KEY in production.
+const OSOVM_API_KEY = get(ENV, "OSOVM_API_KEY", "")
+
+"""
+Authenticate an incoming request.  Returns `(agent_id, nothing)` on success or
+`("", error_string)` on failure.  Fails closed: an unset OSOVM_API_KEY rejects
+every request rather than admitting anyone.
+
+Token format:  `Authorization: Bearer <api_key>|<agent_id>`
+The verified `agent_id` becomes `vm.current_sender` (I-39 — the caller cannot
+choose the credited identity by submitting an :agent body field).
+"""
+function authenticate(req::HTTP.Request)
+    if isempty(OSOVM_API_KEY)
+        return "", "OSOVM_API_KEY not configured — authentication required; set OSOVM_API_KEY env var"
+    end
+    auth_header = HTTP.header(req, "Authorization", "")
+    if isempty(auth_header)
+        return "", "missing Authorization header (Bearer <api_key>|<agent_id>)"
+    end
+    if !startswith(lowercase(auth_header), "bearer ")
+        return "", "Authorization must be a Bearer token"
+    end
+    token = strip(SubString(auth_header, 8))
+    pipe  = findfirst('|', token)
+    if isnothing(pipe)
+        return "", "invalid token format: expected <api_key>|<agent_id>"
+    end
+    key      = String(SubString(token, 1, pipe - 1))
+    agent_id = String(SubString(token, pipe + 1))
+    if key != OSOVM_API_KEY
+        return "", "invalid API key"
+    end
+    if isempty(agent_id)
+        return "", "agent_id must be non-empty in token"
+    end
+    return agent_id, nothing
+end
+
+"""HTTP 401 helper."""
+function unauthorized(msg::String)
+    body = JSON3.write(Dict{String,Any}("status" => "error", "error" => msg))
+    return HTTP.Response(401, ["Content-Type" => "application/json",
+                               "WWW-Authenticate" => "Bearer"], body)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTE HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -103,17 +153,10 @@ function handle_health(req::HTTP.Request)::HTTP.Response
     json_ok(Dict{String,Any}("status" => "ok", "version" => "osovm/1"))
 end
 
-function handle_opcodes(req::HTTP.Request)::HTTP.Response
-    core_list = [Dict{String,Any}("name" => string(k), "opcode" => Int(v), "type" => "core")
-                 for (k, v) in Opcodes.CORE_OPCODES]
-    exp_list  = [Dict{String,Any}("name" => string(k), "opcode" => Int(v), "type" => "expansion")
-                 for (k, v) in Opcodes.EXPANSION_OPCODES]
-    json_ok(Dict{String,Any}(
-        "core_opcodes"      => core_list,
-        "expansion_opcodes" => exp_list,
-        "total"             => length(core_list) + length(exp_list),
-    ))
-end
+# handle_opcodes removed (I-42): GET /opcodes enumerated every mint-capable
+# opcode name to unauthenticated callers.  The lookup table lives in opcodes.jl
+# for internal use; it is not served over HTTP.  (Restored after the 8b88bca
+# rewrite re-added it.)
 
 # HTTP.jl hands the handler a BytesBody, not the raw Vector{UInt8}; JSON3.read
 # has no method for it, which made every POST fail with a MethodError. Coerce
@@ -127,6 +170,12 @@ end
 function handle_run(req::HTTP.Request)::HTTP.Response
     run_id   = new_run_id()
     t_start  = time()
+
+    # ── Authenticate — agent identity comes from the verified token (I-38/I-39) ─
+    agent, auth_err = authenticate(req)
+    if auth_err !== nothing
+        return unauthorized(auth_err)
+    end
 
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
@@ -154,7 +203,7 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     end
 
     # ── Build instruction args ─────────────────────────────────────────────────
-    agent   = string(get(body_obj, :agent, "genesis"))
+    # (:agent body field is ignored — identity comes from the auth token above.)
     raw_args = get(body_obj, :args, nothing)
     instr_args = if raw_args !== nothing
         to_sym_dict(raw_args)
@@ -167,6 +216,7 @@ function handle_run(req::HTTP.Request)::HTTP.Response
     local receipts_out
     local ase_minted::Float64 = 0.0
     local f1_score::Float64   = 0.0
+    local f1_produced::Bool   = false
 
     try
         vm = OsoVM.create_vm()
@@ -181,11 +231,15 @@ function handle_run(req::HTTP.Request)::HTTP.Response
 
         receipts_out = receipts_to_list(vm.receipts)
 
-        # Extract ase_minted from result if present
+        # Extract ase_minted from result if present. No fabricated f1 (I-44):
+        # f1_score is omitted unless the opcode actually produced one.
         if vm_result isa Dict
             ase_minted = Float64(get(vm_result, "ase_minted", get(vm_result, :ase_minted, 0.0)))
-            # Simple F1 heuristic: 0.92 for success, 0.0 for error
-            f1_score   = ase_minted > 0.0 ? 0.92 : (get(vm_result, "status", "") == "error" ? 0.0 : 0.88)
+            f1_from_result = get(vm_result, "f1_score", get(vm_result, :f1_score, nothing))
+            if f1_from_result !== nothing
+                f1_score    = Float64(f1_from_result)
+                f1_produced = true
+            end
         end
 
     catch e
@@ -204,19 +258,29 @@ function handle_run(req::HTTP.Request)::HTTP.Response
         "status"         => "ok",
         "run_id"         => run_id,
         "opcode"         => opcode_str,
-        "f1_score"       => f1_score,
         "ase_minted"     => ase_minted,
         "receipts"       => receipts_out,
         "vm_state_hash"  => vm_state_hash,
         "wall_ms"        => wall_ms,
         "result"         => vm_result,
     )
+    # I-44: omit rather than default — a 0.0 would write a measurement-named
+    # field with a literal.
+    if f1_produced
+        response["f1_score"] = f1_score
+    end
     return json_ok(response)
 end
 
 function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     run_id  = new_run_id()
     t_start = time()
+
+    # ── Authenticate (I-38/I-39) ──────────────────────────────────────────────
+    agent, auth_err = authenticate(req)
+    if auth_err !== nothing
+        return unauthorized(auth_err)
+    end
 
     # ── Parse body ────────────────────────────────────────────────────────────
     local body_obj
@@ -229,7 +293,6 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     veil_ids     = get(body_obj, :veil_ids,     [1])
     entity_count = Int(get(body_obj, :entity_count, 5))
     step_count   = Int(get(body_obj, :step_count,   100))
-    agent        = string(get(body_obj, :agent,  "genesis"))
 
     # ── Execute VEIL on fresh VM ───────────────────────────────────────────────
     local f1_score::Float64     = 0.0
@@ -251,7 +314,10 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         veil_result = OsoVM.execute_instruction(vm, instr)
 
         if veil_result isa Dict
-            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.88)))
+            # I-46 (restored): a missing f1 must not default to a fabricated
+            # 0.88 — default 0.0, which fails the SPP-1 >= 0.7 receipt
+            # requirement until the VEIL opcode produces a real score.
+            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.0)))
             energy_drift = Float64(get(veil_result, "energy_drift", 0.02))
             robustness  = Float64(get(veil_result, "robustness",   0.95))
         end
@@ -300,9 +366,6 @@ function router(req::HTTP.Request)::HTTP.Response
         if target == "/health" && method == "GET"
             return handle_health(req)
 
-        elseif target == "/opcodes" && method == "GET"
-            return handle_opcodes(req)
-
         elseif target == "/run" && method == "POST"
             return handle_run(req)
 
@@ -332,7 +395,7 @@ end
 
 function start(; port::Int = parse(Int, get(ENV, "OSOVM_PORT", "7780")))
     @info "ỌSỌVM HTTP server starting" port=port
-    @info "Routes: GET /health  GET /opcodes  POST /run  POST /veilsim/run"
+    @info "Routes: GET /health  POST /run  POST /veilsim/run"
     HTTP.serve(router, "0.0.0.0", port)
 end
 

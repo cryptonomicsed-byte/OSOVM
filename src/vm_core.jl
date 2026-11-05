@@ -21,6 +21,7 @@ using .Opcodes
 using .OsoCompiler: Instruction, IR
 using .AseSupply
 using .Constants
+using SHA
 
 export VMState, Block, Transaction, Receipt,
        apply_block, initial_state, copy_state,
@@ -424,6 +425,45 @@ end
 # TOC (TOKEN-OF-COMPUTE) HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Anchor MAC gate — mirrors oso_vm.jl anchor_present; keep the two in sync.
+# Fails closed when ZANGBETO_KEY_HEX is unset or malformed.
+function _hmac_sha256(key::Vector{UInt8}, msg::Vector{UInt8})::Vector{UInt8}
+    block_len = 64
+    k = length(key) > block_len ? sha256(key) : key
+    k = length(k) < block_len ? vcat(k, zeros(UInt8, block_len - length(k))) : k
+    inner = sha256(vcat(k .⊻ 0x36, msg))
+    return sha256(vcat(k .⊻ 0x5c, inner))
+end
+
+function _const_time_eq(a::Vector{UInt8}, b::Vector{UInt8})::Bool
+    length(a) == length(b) || return false
+    acc = UInt8(0)
+    for i in 1:length(a)
+        acc |= a[i] ⊻ b[i]
+    end
+    return acc == 0
+end
+
+function _anchor_verified(anchor::String)::Bool
+    isempty(anchor) && return false
+    key_hex = get(ENV, "ZANGBETO_KEY_HEX", "")
+    if isempty(key_hex) || length(key_hex) != 64
+        return false
+    end
+    parts = split(anchor, ':', limit=2)
+    length(parts) == 2 || return false
+    mac_hex, body = parts[1], parts[2]
+    length(mac_hex) == 64 || return false
+    try
+        key = hex2bytes(key_hex)
+        expected = hex2bytes(mac_hex)
+        actual = _hmac_sha256(key, codeunits(body))
+        return _const_time_eq(expected, actual)
+    catch
+        return false
+    end
+end
+
 """
     toc_is_fully_verified(state, agent_id, claimed_gpu_seconds) -> Bool
 
@@ -447,8 +487,7 @@ function toc_is_fully_verified(state::VMState, agent_id::String,
     any(events) do ev
         get(ev, :name, "") == "GpuContribution" &&
         string(get(get(ev, :data, Dict()), "agent_id", "")) == agent_id &&
-        !isnothing(get(get(ev, :data, Dict()), "zangbeto_anchor", nothing)) &&
-        get(get(ev, :data, Dict()), "zangbeto_anchor", "") != ""
+        _anchor_verified(get(get(ev, :data, Dict()), "zangbeto_anchor", ""))
     end
 end
 
@@ -471,8 +510,8 @@ function op_gpu_contribution(state::VMState, args::Dict{Symbol,Any})
     if gpu_seconds <= 0.0
         return state, Dict{Symbol,Any}(:success => false, :error => "gpu_seconds must be positive")
     end
-    if isnothing(zangbeto_anchor) || zangbeto_anchor == ""
-        return state, Dict{Symbol,Any}(:success => false, :error => "zangbeto_anchor required")
+    if !_anchor_verified(isnothing(zangbeto_anchor) ? "" : string(zangbeto_anchor))
+        return state, Dict{Symbol,Any}(:success => false, :error => "zangbeto_anchor failed MAC verification")
     end
 
     # I-19: anchor already verified above (error if absent); bind variable for drift-check

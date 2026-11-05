@@ -529,21 +529,23 @@ module FFI
     end
     
     # Idris FFI (dependent type proofs - stub)
+    # FAIL CLOSED (I-17): no verification is implemented, so nothing verifies.
     function verify_receipt(hash::String)::Bool
-        # Real impl would verify cryptographic proof
-        return length(hash) >= 64
+        @warn "verify_receipt: cryptographic verification not implemented - rejecting" hash
+        return false
     end
     
-    # Python FFI (prototyping)
+    # Python FFI (prototyping) — must not fabricate a mint result.
     function mock_job(job_data::Dict)::Dict{String, Any}
-        return Dict("ase_minted" => 5.0, "status" => "complete")
+        @warn "mock_job: not implemented - failing closed"
+        return Dict("success" => false, "error" => "mock_job: not implemented")
     end
     
     # 7×7 Badge Verification (external)
+    # FAIL CLOSED: with no registry check, no shrine holds the badge.
     function has_seven_by_seven_badge(shrine::String)::Bool
-        # Real impl would check TechGnØŞ.EXE badge registry
-        # For now, stub returns true
-        return true
+        @warn "has_seven_by_seven_badge: badge registry not implemented - rejecting" shrine
+        return false
     end
     
     # Sabbath Check (Saturday UTC)
@@ -679,51 +681,66 @@ end
 """
     anchor_present(anchor::String) -> Bool
 
-Weak guard: checks that the anchor is non-empty, whitespace-free, and ≥ 8 chars;
-when VANTAGE_URL is set, also checks HTTP existence (GET /api/receipts/:anchor → 200).
+Verify a Zàngbétò anchor MAC. Format: "<hmac_hex>:<body>" where hmac_hex is
+a 64-char hex HMAC-SHA256 over the UTF-8 bytes of body, keyed with
+ZANGBETO_KEY_HEX (64 hex chars = 32 bytes, shared between OSOVM and the
+Zàngbétò service). Fails closed: missing key, malformed anchor, or bad MAC
+all return false. Timing-safe comparison on the MAC bytes.
 
-NOT a signature verification — I-17 is open until Ed25519 verification over
-anchor bytes is implemented here (keyed to the Zàngbétò service key).
+NOTE (migration path): HMAC-SHA256 is a symmetric interim. The end state for
+I-17 is Ed25519 verification against the Zàngbétò public key so third parties
+can verify anchors independently; adding Nettle.jl (libnettle FFI) on the
+compute tier unblocks that. This gate is the zero-dependency stand-in that
+already prevents forgery by anyone who does not hold the shared key.
 """
+function _hmac_sha256(key::Vector{UInt8}, msg::Vector{UInt8})::Vector{UInt8}
+    block_len = 64
+    k = length(key) > block_len ? sha256(key) : key
+    k = length(k) < block_len ? vcat(k, zeros(UInt8, block_len - length(k))) : k
+    inner = sha256(vcat(k .⊻ 0x36, msg))
+    return sha256(vcat(k .⊻ 0x5c, inner))
+end
+
+function _const_time_eq(a::Vector{UInt8}, b::Vector{UInt8})::Bool
+    length(a) == length(b) || return false
+    acc = UInt8(0)
+    for i in 1:length(a)
+        acc |= a[i] ⊻ b[i]
+    end
+    return acc == 0
+end
+
 function anchor_present(anchor::String)::Bool
-    if isempty(anchor)
+    isempty(anchor) && return false
+    key_hex = get(ENV, "ZANGBETO_KEY_HEX", "")
+    if isempty(key_hex) || length(key_hex) != 64
+        @warn "anchor_present: ZANGBETO_KEY_HEX not set or malformed - rejecting all anchors"
         return false
     end
-    vantage_base = get(ENV, "VANTAGE_URL", "")
-    if isempty(vantage_base)
-        # Dev/test mode: structural check only — real verification requires VANTAGE_URL.
-        passes_format = !any(isspace, anchor) && length(anchor) >= 8
-        if !passes_format
-            @warn "anchor_present: anchor failed format check (dev mode)" anchor
-        else
-            @warn "anchor_present: VANTAGE_URL not set — skipping cryptographic verification" anchor
-        end
-        return passes_format
-    end
+    parts = split(anchor, ':', limit=2)
+    length(parts) == 2 || return false
+    mac_hex, body = parts[1], parts[2]
+    length(mac_hex) == 64 || return false
     try
-        resp = HTTP.get("$(vantage_base)/api/receipts/$(anchor)";
-                        connect_timeout=5, readtimeout=10, status_exception=false)
-        verified = resp.status == 200
-        if !verified
-            @warn "anchor_present: Vantage returned $(resp.status) for anchor" anchor
-        end
-        return verified
+        key = hex2bytes(key_hex)
+        expected = hex2bytes(mac_hex)
+        actual = _hmac_sha256(key, codeunits(body))
+        ok = _const_time_eq(expected, actual)
+        ok || @warn "anchor_present: MAC verification failed"
+        return ok
     catch e
-        @warn "anchor_present: network error verifying anchor" anchor error=string(e)
+        @warn "anchor_present: MAC check error" error=string(e)
         return false
     end
 end
 
 function call_ase_vault(instr::OsoCompiler.Instruction)::Any
-    # Offload to ase-vault via HTTP
-    try
-        # Simulation of HTTP call to ase-vault
-        # response = HTTP.post("http://localhost:5000/execute", body=JSON.json(instr))
-        # return JSON.parse(String(response.body))
-        return Dict("status" => "offloaded", "vault_receipt" => "v-$(hash(instr))")
-    catch e
-        return Dict("error" => "ase-vault unreachable", "details" => string(e))
-    end
+    # FAIL CLOSED: the offload target does not exist. A fabricated
+    # vault_receipt here is what turns a deleted mint opcode into a
+    # fake success - the receipt must never be synthesized.
+    @warn "call_ase_vault: ase-vault offload not implemented - failing closed"
+    return Dict("status" => "error", "success" => false,
+                "error" => "ase-vault offload not implemented")
 end
 
 # Quadrinity Government cluster (real stateful tracking, not decorative).
