@@ -359,7 +359,10 @@ module techgnosis::elegbara_router {
         assert!(tx_context::sender(ctx) == router.admin, E_NOT_ADMIN);
         assert!(option::is_none(&router.pending_withdrawal), E_TIMELOCK);
         let bal = withdraw_subwallet(router, wallet, amount);
-        router.pending_withdrawal = option::some(PendingWithdrawal<T> {
+        // option::fill, not assignment: Option<PendingWithdrawal> has no drop
+        // (Balance<T> inside PendingWithdrawal has no drop), so `= some(...)`
+        // would be a compile error.
+        option::fill(&mut router.pending_withdrawal, PendingWithdrawal<T> {
             wallet,
             balance: bal,
             requested_epoch: tx_context::epoch(ctx),
@@ -371,7 +374,11 @@ module techgnosis::elegbara_router {
         assert!(tx_context::sender(ctx) == router.admin, E_NOT_ADMIN);
         let pw = option::extract(&mut router.pending_withdrawal);
         assert!(tx_context::epoch(ctx) >= pw.requested_epoch + TIMELOCK_EPOCHS, E_TIMELOCK);
-        coin::from_balance(pw.balance, ctx)
+        // Destructure: Balance<T> has no copy/drop, so field moves must be
+        // explicit — `pw.balance` would be an illegal implicit copy, and pw
+        // itself must be fully consumed.
+        let PendingWithdrawal { wallet: _, balance, requested_epoch: _ } = pw;
+        coin::from_balance(balance, ctx)
     }
 
     // ===== Getters =====
