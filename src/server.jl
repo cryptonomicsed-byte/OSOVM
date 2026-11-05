@@ -107,7 +107,10 @@ Authenticate an incoming request.  Returns `(agent_id, nothing)` on success or
 `("", error_string)` on failure.  Fails closed: an unset OSOVM_API_KEY rejects
 every request rather than admitting anyone.
 
-Token format:  `Authorization: Bearer <api_key>|<agent_id>`
+Token format (both accepted):
+  `Authorization: Bearer <api_key>|<agent_id>`   — explicit identity (preferred)
+  `Authorization: Bearer <api_key>`              — bare key (Vantage client
+    compat); identity defaults to the X-Agent-Id header, else "vantage".
 The verified `agent_id` becomes `vm.current_sender` (I-39 — the caller cannot
 choose the credited identity by submitting an :agent body field).
 """
@@ -125,10 +128,14 @@ function authenticate(req::HTTP.Request)
     token = strip(SubString(auth_header, 8))
     pipe  = findfirst('|', token)
     if isnothing(pipe)
-        return "", "invalid token format: expected <api_key>|<agent_id>"
+        # Bare key — Vantage's osovm_client.py sends `Bearer {key}` with no
+        # identity suffix; fall back to the X-Agent-Id header, else "vantage".
+        key      = token
+        agent_id = HTTP.header(req, "X-Agent-Id", "vantage")
+    else
+        key      = String(SubString(token, 1, pipe - 1))
+        agent_id = String(SubString(token, pipe + 1))
     end
-    key      = String(SubString(token, 1, pipe - 1))
-    agent_id = String(SubString(token, pipe + 1))
     if key != OSOVM_API_KEY
         return "", "invalid API key"
     end
