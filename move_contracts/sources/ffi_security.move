@@ -180,19 +180,21 @@ module techgnosis::ffi_security {
     /// Checks for overflow, underflow, and precision loss
     public fun convert_f64_to_u128(
         config: &mut FFISecurityConfig,
-        f64_value: u128, // Interpreted as f64 bits
+        f64_value: u128, // Raw IEEE 754 double bits
         ctx: &TxContext,
     ): ConversionResult {
-        // In production: deserialize IEEE 754 f64 format
-        // For now: simplified bounds checking
+        // FIX (H4): previously compared the raw u128 bit pattern against
+        // F64_MAX_VALUE and passed the bits through as the "output" — the
+        // precision checks never touched a real float. Now decodes the
+        // IEEE 754 layout: 1 sign | 11 exponent | 52 fraction.
 
         let input_value = f64_value;
-        let output_value: u128;
-        let valid = true;
-        let mut precision_loss = 0u64;
+        let sign_bit = (f64_value >> 63) & 1u128;
+        let exponent_bits = ((f64_value >> 52) & 0x7FFu128) as u64;
+        let fraction = f64_value & 0xF_FFFF_FFFF_FFFFu128;
 
-        // Check overflow
-        if (f64_value > F64_MAX_VALUE) {
+        // 0x7FF exponent = Inf/NaN -> reject
+        if (exponent_bits == 0x7FF) {
             return ConversionResult {
                 input_value,
                 output_value: 0,
@@ -205,16 +207,64 @@ module techgnosis::ffi_security {
             }
         };
 
-        output_value = f64_value;
-
-        // Calculate precision loss (f64 has 53-bit mantissa)
-        if (f64_value > (1u128 << (F64_PRECISION_BITS as u8))) {
-            precision_loss = U128_PRECISION_BITS - F64_PRECISION_BITS;
+        // Negative floats underflow an unsigned u128 -> reject
+        if (sign_bit == 1) {
+            return ConversionResult {
+                input_value,
+                output_value: 0,
+                source_type: b"f64",
+                dest_type: b"u128",
+                precision_bits_lost: 64,
+                precision_loss_percentage: 100,
+                valid: false,
+                conversion_timestamp: tx_context::epoch(ctx),
+            }
         };
 
-        let loss_percentage = (precision_loss * 100u64) / U128_PRECISION_BITS;
+        let output_value: u128;
+        let precision_loss: u64;
+        if (exponent_bits == 0 && fraction == 0) {
+            // +0.0 -> 0, exact
+            output_value = 0;
+            precision_loss = 0;
+        } else if (exponent_bits == 0) {
+            // Subnormal: 0.fraction * 2^-1022 -> < 1, truncates to 0
+            output_value = 0;
+            precision_loss = 52;
+        } else if (exponent_bits < 1023) {
+            // 0 < value < 1 -> truncates to 0 in u128
+            output_value = 0;
+            precision_loss = 52;
+        } else {
+            // Normalized: value = 1.fraction * 2^(exp-1023)
+            let significand = 0x10_0000_0000_0000u128 + fraction; // 2^52 + fraction
+            let shift = exponent_bits - 1023; // value = significand * 2^(shift-52)
+            if (shift >= 52) {
+                let left = shift - 52;
+                if (left >= 128 || significand > (U128_MAX >> (left as u8))) {
+                    return ConversionResult {
+                        input_value,
+                        output_value: 0,
+                        source_type: b"f64",
+                        dest_type: b"u128",
+                        precision_bits_lost: 64,
+                        precision_loss_percentage: 100,
+                        valid: false,
+                        conversion_timestamp: tx_context::epoch(ctx),
+                    }
+                };
+                output_value = significand << (left as u8);
+                precision_loss = 0;
+            } else {
+                let right = 52 - shift;
+                output_value = significand >> (right as u8);
+                precision_loss = right;
+            };
+        };
 
-        // Check if loss exceeds threshold
+        let loss_percentage = (precision_loss * 100u64) / 52u64;
+
+        // Threshold check (admin-configured)
         if (!config.allow_precision_loss && loss_percentage > config.max_precision_loss_percentage) {
             return ConversionResult {
                 input_value,
@@ -235,7 +285,7 @@ module techgnosis::ffi_security {
             dest_type: b"u128",
             precision_bits_lost: precision_loss,
             precision_loss_percentage: loss_percentage,
-            valid,
+            valid: true,
             conversion_timestamp: tx_context::epoch(ctx),
         };
 
@@ -288,6 +338,12 @@ module techgnosis::ffi_security {
         function: address,
         ctx: &TxContext,
     ) {
+        // FIX (H4): the guard key was fully caller-supplied, so an attacker
+        // could inflate ANY function's depth to max_call_depth and DoS its
+        // legitimate callers. Bind the key to the caller: a principal may
+        // only enter guards registered to its own address (admin may enter
+        // any — protocol-managed entries).
+        assert!(function == tx_context::sender(ctx) || tx_context::sender(ctx) == config.admin, E_NOT_AUTHORIZED);
         let guard = if (table::contains(&config.reentrancy_guards, function)) {
             table::borrow_mut(&mut config.reentrancy_guards, function)
         } else {
@@ -386,8 +442,10 @@ module techgnosis::ffi_security {
         verified_by: address,
         ctx: &TxContext,
     ): ProofAttestation {
-        // In production: use Idris proof verifier
-        // For now: accept attestation from trusted verifier
+        // FIX (H4): attestations were forgeable by anyone (valid=true
+        // unconditionally). Only the admin (trusted verifier) may attest.
+        assert!(tx_context::sender(ctx) == config.admin, E_NOT_AUTHORIZED);
+        assert!(verified_by == tx_context::sender(ctx), E_NOT_AUTHORIZED);
 
         let attestation = ProofAttestation {
             proof_id: config.verified_proofs_count,

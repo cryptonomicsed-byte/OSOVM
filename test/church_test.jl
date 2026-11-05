@@ -30,15 +30,15 @@ Instr = OsoVM.OsoCompiler.Instruction
 
         # bootstrap a priest via prior acolyte + ordain by simulating an initial mentor
         # (no priest exists yet, so seed one directly for test bootstrap realism)
-        vm.priests["seed_priest"] = "genesis"
+        vm.keepers["seed_priest"] = "genesis"
         r2 = OsoVM.execute_instruction(vm, Instr(0x68, Dict{Symbol,Any}(:name => "aco1", :mentor => "seed_priest")))
         @test r2["success"] == true
 
         vm.current_sender = "seed_priest"
         r3 = OsoVM.execute_instruction(vm, Instr(0x67, Dict{Symbol,Any}(:name => "aco1")))
         @test r3["success"] == true
-        @test haskey(vm.priests, "aco1")
-        @test !haskey(vm.acolytes, "aco1")
+        @test haskey(vm.keepers, "aco1")
+        @test !haskey(vm.aspirants, "aco1")
 
         r4 = OsoVM.execute_instruction(vm, Instr(0x67, Dict{Symbol,Any}(:name => "never_acolyte")))
         @test r4["success"] == false
@@ -48,7 +48,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x61, Dict{Symbol,Any}(:id => "s1", :preacher => "nobody")))
         @test r1["success"] == false
-        vm.priests["p1"] = "genesis"
+        vm.keepers["p1"] = "genesis"
         r2 = OsoVM.execute_instruction(vm, Instr(0x61, Dict{Symbol,Any}(:id => "s1", :preacher => "p1")))
         @test r2["success"] == true
     end
@@ -57,7 +57,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x69, Dict{Symbol,Any}(:id => "sh1", :keeper => "nobody")))
         @test r1["success"] == false
-        vm.priests["keeper1"] = "genesis"
+        vm.keepers["keeper1"] = "genesis"
         r2 = OsoVM.execute_instruction(vm, Instr(0x69, Dict{Symbol,Any}(:id => "sh1", :keeper => "keeper1")))
         @test r2["success"] == true
 
@@ -78,7 +78,7 @@ Instr = OsoVM.OsoCompiler.Instruction
         vm = OsoVM.create_vm()
         r1 = OsoVM.execute_instruction(vm, Instr(0x64, Dict{Symbol,Any}(:target => "t1", :grantor => "nobody")))
         @test r1["success"] == false
-        vm.priests["p1"] = "genesis"
+        vm.keepers["p1"] = "genesis"
         r2 = OsoVM.execute_instruction(vm, Instr(0x64, Dict{Symbol,Any}(:target => "t1", :grantor => "p1")))
         @test r2["success"] == true
     end
@@ -105,7 +105,7 @@ Instr = OsoVM.OsoCompiler.Instruction
 
     @testset "TRANSGRESSION requires clergy target, BANISH requires open heresy + final_signer" begin
         vm = OsoVM.create_vm(final_signer="bino")
-        vm.priests["p1"] = "genesis"
+        vm.keepers["p1"] = "genesis"
         r1 = OsoVM.execute_instruction(vm, Instr(0x6c, Dict{Symbol,Any}(:id => "h1", :accused => "not_clergy", :charge => "c")))
         @test r1["success"] == false
         r2 = OsoVM.execute_instruction(vm, Instr(0x6c, Dict{Symbol,Any}(:id => "h1", :accused => "p1", :charge => "c")))
@@ -117,13 +117,13 @@ Instr = OsoVM.OsoCompiler.Instruction
         vm.current_sender = "bino"
         r4 = OsoVM.execute_instruction(vm, Instr(0x6d, Dict{Symbol,Any}(:target => "p1", :heresy_id => "h1")))
         @test r4["success"] == true
-        @test !haskey(vm.priests, "p1")
-        @test vm.excommunicated["p1"] == true
+        @test !haskey(vm.keepers, "p1")
+        @test vm.banished["p1"] == true
     end
 
     @testset "ENSHRINE blocked for excommunicated, final_signer only" begin
         vm = OsoVM.create_vm(final_signer="bino")
-        vm.excommunicated["bad1"] = true
+        vm.banished["bad1"] = true
         vm.current_sender = "bino"
         r1 = OsoVM.execute_instruction(vm, Instr(0x6e, Dict{Symbol,Any}(:name => "bad1")))
         @test r1["success"] == false
@@ -147,7 +147,7 @@ Instr = OsoVM.OsoCompiler.Instruction
 
         r5 = OsoVM.execute_instruction(vm, Instr(0x70, Dict{Symbol,Any}(:shrine_id => "unknown")))
         @test r5["success"] == false
-        vm.priests["keeper1"] = "genesis"
+        vm.keepers["keeper1"] = "genesis"
         OsoVM.execute_instruction(vm, Instr(0x69, Dict{Symbol,Any}(:id => "sh1", :keeper => "keeper1")))
         r6 = OsoVM.execute_instruction(vm, Instr(0x70, Dict{Symbol,Any}(:shrine_id => "sh1")))
         @test r6["success"] == true
@@ -168,20 +168,20 @@ Instr = OsoVM.OsoCompiler.Instruction
         r2 = OsoVM.execute_instruction(vm, Instr(0x73, Dict{Symbol,Any}(:name => "believer1")))
         @test r2["success"] == false
 
-        r3 = OsoVM.execute_instruction(vm, Instr(0x74, Dict{Symbol,Any}(:participant => "unbaptized", :priest => "p1")))
+        r3 = OsoVM.execute_instruction(vm, Instr(0x74, Dict{Symbol,Any}(:participant => "unbaptized", :keeper => "p1")))
         @test r3["success"] == false
-        vm.priests["p1"] = "genesis"
-        r4 = OsoVM.execute_instruction(vm, Instr(0x74, Dict{Symbol,Any}(:participant => "believer1", :priest => "p1")))
+        vm.keepers["p1"] = "genesis"
+        r4 = OsoVM.execute_instruction(vm, Instr(0x74, Dict{Symbol,Any}(:participant => "believer1", :keeper => "p1")))
         @test r4["success"] == true
     end
 
     @testset "DISCLOSURE -> ATONEMENT -> RELEASE lifecycle" begin
         vm = OsoVM.create_vm()
-        vm.priests["p1"] = "genesis"
-        r1 = OsoVM.execute_instruction(vm, Instr(0x75, Dict{Symbol,Any}(:id => "conf1", :priest => "unknown_priest")))
+        vm.keepers["p1"] = "genesis"
+        r1 = OsoVM.execute_instruction(vm, Instr(0x75, Dict{Symbol,Any}(:id => "conf1", :keeper => "unknown_priest")))
         @test r1["success"] == false
         vm.current_sender = "sinner1"
-        r2 = OsoVM.execute_instruction(vm, Instr(0x75, Dict{Symbol,Any}(:id => "conf1", :priest => "p1", :sin => "pride")))
+        r2 = OsoVM.execute_instruction(vm, Instr(0x75, Dict{Symbol,Any}(:id => "conf1", :keeper => "p1", :sin => "pride")))
         @test r2["success"] == true
 
         r3 = OsoVM.execute_instruction(vm, Instr(0x76, Dict{Symbol,Any}(:confession_id => "unknown")))

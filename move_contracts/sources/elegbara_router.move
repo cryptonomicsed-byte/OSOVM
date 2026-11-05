@@ -16,6 +16,7 @@ module techgnosis::elegbara_router {
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::event;
+    use std::option::{Self, Option};
 
     // ===== Constants =====
     const ESU_TAX_BPS: u64 = 369;   // 3.69%
@@ -47,6 +48,14 @@ module techgnosis::elegbara_router {
     // ===== Errors =====
     const E_ZERO_AMOUNT: u64 = 105;
     const E_NOT_ADMIN: u64 = 101;
+    const E_BELOW_MIN: u64 = 106;
+    const E_NOT_PENDING: u64 = 107;
+    const E_TIMELOCK: u64 = 108;
+    const E_BAD_WALLET: u64 = 109;
+    // Smallest gross whose floor(gross * 369 / 10000) >= 1 (dust-split guard).
+    const MIN_SETTLEMENT: u64 = 28;
+    // Timelock for governed withdrawals; Sui epochs are ~24h, 7 ≈ one week.
+    const TIMELOCK_EPOCHS: u64 = 7;
 
     // ===== Events =====
     public struct EsuTaxCollected has copy, drop {
@@ -103,9 +112,17 @@ module techgnosis::elegbara_router {
         sabbath_reserve: Balance<T>,
         inheritance_pool: Balance<T>,
         performance_pool: Balance<T>,
+        pending_withdrawal: Option<PendingWithdrawal<T>>,
         total_esu_tax_collected: u64,
         total_burned: u64,
         total_agents_born: u64,
+    }
+
+    /// Pending governed withdrawal — request/claim with an epoch timelock
+    public struct PendingWithdrawal<phantom T> has store {
+        wallet: u8,
+        balance: Balance<T>,
+        requested_epoch: u64,
     }
 
     // ===== Create =====
@@ -124,6 +141,7 @@ module techgnosis::elegbara_router {
             sabbath_reserve: balance::zero<T>(),
             inheritance_pool: balance::zero<T>(),
             performance_pool: balance::zero<T>(),
+            pending_withdrawal: option::none(),
             total_esu_tax_collected: 0,
             total_burned: 0,
             total_agents_born: 0,
@@ -133,7 +151,11 @@ module techgnosis::elegbara_router {
 
     // ===== Core: Èṣù tithe extraction (pure) =====
     public fun extract_esu_tax(amount: u64): (u64, u64) {
-        let tax = (amount * ESU_TAX_BPS) / BPS_DENOM;
+        // FIX (C6): floor division let any gross < 28 units pay zero tithe
+        // (dust-splitting bypass). Reject below-minimum settlement; do the
+        // multiply in u128 (u64 * u64 can overflow before the division).
+        assert!(amount >= MIN_SETTLEMENT, E_BELOW_MIN);
+        let tax = (((amount as u128) * (ESU_TAX_BPS as u128)) / (BPS_DENOM as u128)) as u64;
         let net = amount - tax;
         (tax, net)
     }
@@ -285,7 +307,11 @@ module techgnosis::elegbara_router {
         let elegbara_amt = (paid * BIRTH_ELEGBARA_BPS) / BPS_DENOM;
         let inheritance_amt = (paid * BIRTH_INHERITANCE_BPS) / BPS_DENOM;
 
-        balance::join(&mut router.lottery_burn, balance::split(&mut bal, burn_amt)); // burn sink
+        // Burn = permanent lock: coins join lottery_burn, the one sub-wallet
+        // with NO withdrawal path (excluded from withdraw_subwallet). They are
+        // not destroyed (Sui offers no nonzero Balance destruction); they are
+        // unspendable. total_burned counts permanently-locked coins.
+        balance::join(&mut router.lottery_burn, balance::split(&mut bal, burn_amt));
         router.total_burned = router.total_burned + burn_amt;
         balance::join(&mut router.veilsim, balance::split(&mut bal, elegbara_amt));
         balance::join(&mut router.inheritance_pool, balance::split(&mut bal, inheritance_amt));
@@ -301,12 +327,51 @@ module techgnosis::elegbara_router {
         create_birth_record(agent_id, birther_addr, generation, ctx)
     }
 
-    // ===== Admin withdraw from a sub-wallet (governance uses this to disburse) =====
-    public fun withdraw_reserve<T>(
-        router: &mut ElegbaraRouter<T>, amount: u64, ctx: &mut TxContext,
-    ): Coin<T> {
+    // ===== Governed withdrawal — timelocked request/claim for every sub-wallet =====
+    // FIX (C7): only withdraw_reserve existed (admin-only, no timelock) and the
+    // other 9 sub-wallets had NO withdrawal path at all, permanently locking
+    // routed tithe. Now: admin requests from any named sub-wallet; the funds
+    // leave the sub-wallet immediately but are claimable only after
+    // TIMELOCK_EPOCHS. lottery_burn (wallet 4) is the burn sink — deliberately
+    // excluded so it stays a permanent lock.
+
+    fun withdraw_subwallet<T>(router: &mut ElegbaraRouter<T>, wallet: u8, amount: u64): Balance<T> {
+        if (wallet == 0) { balance::split(&mut router.veilsim, amount) }
+        else if (wallet == 1) { balance::split(&mut router.rnd, amount) }
+        else if (wallet == 2) { balance::split(&mut router.governance, amount) }
+        else if (wallet == 3) { balance::split(&mut router.reserve, amount) }
+        else if (wallet == 5) { balance::split(&mut router.grants, amount) }
+        else if (wallet == 6) { balance::split(&mut router.ubi, amount) }
+        else if (wallet == 7) { balance::split(&mut router.sabbath_reserve, amount) }
+        else if (wallet == 8) { balance::split(&mut router.inheritance_pool, amount) }
+        else if (wallet == 9) { balance::split(&mut router.performance_pool, amount) }
+        else { abort E_BAD_WALLET }
+    }
+
+    /// Admin requests a timelocked withdrawal from a named sub-wallet.
+    /// One pending request at a time.
+    public fun request_withdrawal<T>(
+        router: &mut ElegbaraRouter<T>,
+        wallet: u8,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
         assert!(tx_context::sender(ctx) == router.admin, E_NOT_ADMIN);
-        coin::from_balance(balance::split(&mut router.reserve, amount), ctx)
+        assert!(option::is_none(&router.pending_withdrawal), E_TIMELOCK);
+        let bal = withdraw_subwallet(router, wallet, amount);
+        router.pending_withdrawal = option::some(PendingWithdrawal<T> {
+            wallet,
+            balance: bal,
+            requested_epoch: tx_context::epoch(ctx),
+        });
+    }
+
+    /// Admin claims the pending withdrawal after the timelock has passed.
+    public fun claim_withdrawal<T>(router: &mut ElegbaraRouter<T>, ctx: &mut TxContext): Coin<T> {
+        assert!(tx_context::sender(ctx) == router.admin, E_NOT_ADMIN);
+        let pw = option::extract(&mut router.pending_withdrawal);
+        assert!(tx_context::epoch(ctx) >= pw.requested_epoch + TIMELOCK_EPOCHS, E_TIMELOCK);
+        coin::from_balance(pw.balance, ctx)
     }
 
     // ===== Getters =====
