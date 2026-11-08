@@ -27,7 +27,6 @@ camel_cases = [
     ("@aseInvocation(x=1);",      0xac),
     ("@ancestralCall(x=1);",      0xad),
     # single-word, must still work (regression guard)
-    ("@impact(x=1);",             0x11),
     ("@halt;",                    0x00),
 ]
 
@@ -37,6 +36,14 @@ camel_cases = [
         @test length(ir) == 1
         @test ir[1].opcode == expected_opcode
     end
+end
+
+# Fail closed: an unknown attribute is a compile error, never a NOOP. @impact is
+# the case that matters -- 0x11 IMPACT was deleted as a caller-priced Àṣẹ mint
+# (I-12/I-13); this test used to assert it still compiled to 0x11.
+@testset "unknown and deleted attributes do not compile" begin
+    @test_throws ErrorException compile_oso("@impact(x=1);")
+    @test_throws ErrorException compile_oso("@tihte(amount=1);")
 end
 
 println("ALL PASSED")

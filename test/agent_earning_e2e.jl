@@ -6,6 +6,8 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 
 using SHA, Dates
 
+# world_tiles.jl does `using ..Seven`; oso_vm.jl includes seven.jl first, so must we.
+include(joinpath(@__DIR__, "..", "src", "seven.jl"))
 include(joinpath(@__DIR__, "..", "src", "world_tiles.jl"))
 
 using .WorldTiles

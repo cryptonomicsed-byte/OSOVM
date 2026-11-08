@@ -596,14 +596,14 @@ end
 """
     verify_attestation_signature(quote::String, root_ca::String) -> Bool
 
-Verify that `quote` is a TEE attestation whose signature is valid
+Verify that `quote_bytes` is a TEE attestation whose signature is valid
 against `root_ca` (the vendor root certificate authority).
 
 STATUS: STUB — always returns false until SGX DCAP / TDX verification
 is wired. The gate must verify the quote signature, not just compare
 measurement fields.
 """
-function verify_attestation_signature(quote::String, root_ca::String)::Bool
+function verify_attestation_signature(quote_bytes::String, root_ca::String)::Bool
     # TEE quote signature verification (SGX DCAP / TDX) not yet wired.
     return false
 end
