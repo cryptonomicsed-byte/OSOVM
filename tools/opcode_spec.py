@@ -70,6 +70,13 @@ def render(p: dict) -> str:
         f"declared_bytes = {sum(1 for r in rows if r['names'])}",
         f"declared_names = {sum(len(r['names']) for r in rows)}",
     ] + [f"{k} = {v}" for k, v in sorted(counts.items())] + [""]
+    # The deleted register: bytes the VM rejects as removed. Generated, so it
+    # cannot drift from the handler; a deleted byte that is still declared is a
+    # separate failure (removed-but-declared).
+    deleted = sorted((r for r in p["bytes"] if r["class"] == "removed" and not r["names"]),
+                     key=lambda r: int(r["byte"], 16))
+    for r in deleted:
+        out += ["[[deleted]]", f"byte = {_q(r['byte'])}", f"reason = {_q(r['note'])}", ""]
     for r in sorted(rows, key=lambda r: int(r["byte"], 16)):
         out += [
             "[[opcode]]",
