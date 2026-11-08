@@ -304,9 +304,11 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     step_count   = Int(get(body_obj, :step_count,   100))
 
     # ── Execute VEIL on fresh VM ───────────────────────────────────────────────
-    local f1_score::Float64     = 0.0
-    local energy_drift::Float64 = 0.0
-    local robustness::Float64   = 0.0
+    # Measurements come only from what the VEIL produced (I-44). An absent value
+    # is absent -- listed in "unmeasured" -- never a literal. 8b88bca had
+    # defaulted robustness to 0.95 and energy_drift to 0.02, so every receipt
+    # carried fabricated good measurements.
+    local measured = Dict{String,Float64}()
     local receipt_data::Dict{String,Any} = Dict{String,Any}()
 
     try
@@ -322,13 +324,17 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
         instr      = OsoVM.OsoCompiler.Instruction(veil_opcode, instr_args)
         veil_result = OsoVM.execute_instruction(vm, instr)
 
-        if veil_result isa Dict
-            # I-46 (restored): a missing f1 must not default to a fabricated
-            # 0.88 — default 0.0, which fails the SPP-1 >= 0.7 receipt
-            # requirement until the VEIL opcode produces a real score.
-            f1_score    = Float64(get(veil_result, "f1",         get(veil_result, :f1,    0.0)))
-            energy_drift = Float64(get(veil_result, "energy_drift", 0.02))
-            robustness  = Float64(get(veil_result, "robustness",   0.95))
+        if veil_result isa AbstractDict
+            for (out, keys) in (("f1_score", ("f1", :f1, "f1_score", :f1_score)),
+                                ("energy_drift", ("energy_drift", :energy_drift)),
+                                ("robustness", ("robustness", :robustness)))
+                for k in keys
+                    v = get(veil_result, k, nothing)
+                    if v isa Real
+                        measured[out] = Float64(v); break
+                    end
+                end
+            end
         end
 
         receipt_data = Dict{String,Any}(
@@ -337,11 +343,9 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
             "veil_ids"      => collect(Int, veil_ids),
             "entity_count"  => entity_count,
             "step_count"    => step_count,
-            "f1_score"      => f1_score,
-            "energy_drift"  => energy_drift,
-            "robustness"    => robustness,
             "timestamp"     => string(now()),
         )
+        merge!(receipt_data, measured)
 
     catch e
         @warn "OSOVM /veilsim/run error" agent=agent error=string(e)
@@ -354,12 +358,11 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
     response = Dict{String,Any}(
         "status"       => "ok",
         "run_id"       => run_id,
-        "f1_score"     => f1_score,
-        "energy_drift" => energy_drift,
-        "robustness"   => robustness,
         "receipt"      => receipt_data,
+        "unmeasured"   => [k for k in ("f1_score", "energy_drift", "robustness") if !haskey(measured, k)],
         "wall_ms"      => wall_ms,
     )
+    merge!(response, measured)
     return json_ok(response)
 end
 
