@@ -40,6 +40,9 @@ on:
 jobs:
   invariants:
     runs-on: ubuntu-latest
+    # Fail with a log instead of being cancelled at GitHub's 6h limit (which
+    # keeps no log). runtests.jl also kills any single file after 15 min.
+    timeout-minutes: 120
     steps:
       - name: Checkout OSOVM (the governed tree)
         uses: actions/checkout@v4

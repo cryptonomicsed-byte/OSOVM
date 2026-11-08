@@ -170,9 +170,11 @@ function parse_attribute(p::Parser)::Instruction
     
     # Get opcode
     opcode = Opcodes.get_opcode(attr_name)
+    # Fail closed. This used to warn and substitute NOOP, so a typo -- or a
+    # deleted opcode like @impact (0x11, a caller-priced mint) -- compiled into
+    # a program that silently did something other than what was written.
     if opcode == 0x00 && attr_name != :HALT
-        @warn "Unknown attribute: $attr_name, using NOOP"
-        opcode = 0x01
+        error("Unknown attribute @$(name_token.value) (resolved :$attr_name): no such opcode in OPCODE_MAP")
     end
     
     args = Dict{Symbol, Any}()

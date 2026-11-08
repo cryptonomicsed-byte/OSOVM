@@ -14,6 +14,9 @@ using Dates
 const TEST_DIR = joinpath(@__DIR__)
 
 # Benchmarks are slow and non-deterministic by design — skip in fast mode
+# Per-file wall-clock limit (seconds). Override with OSOVM_TEST_FILE_TIMEOUT.
+const FILE_TIMEOUT = parse(Int, get(ENV, "OSOVM_TEST_FILE_TIMEOUT", "900"))
+
 const SKIP_IN_FAST = Set(["veil_benchmarks.jl"])
 
 # Tests that require network/external services — skip in offline CI
@@ -63,9 +66,30 @@ for fname in all_test_files
     end
 
     t0 = time()
-    # Run in a clean subprocess so module re-definitions don't accumulate
-    result = run(ignorestatus(`julia --project=$(joinpath(TEST_DIR, "..")) $path`))
+    # Announce first and flush: when CI hangs, the last RUN line names the file.
+    # (GitHub keeps no log for a run cancelled at the job limit, so for months
+    # the invariants job hung without saying where.)
+    println("  RUN   $fname"); flush(stdout)
+    # Run in a clean subprocess so module re-definitions don't accumulate, and
+    # kill it if it outlives FILE_TIMEOUT so one hang cannot eat the whole job.
+    proc = run(ignorestatus(`julia --project=$(joinpath(TEST_DIR, "..")) $path`); wait = false)
+    timed_out = Ref(false)
+    watchdog = Timer(FILE_TIMEOUT) do _
+        if process_running(proc)
+            timed_out[] = true
+            kill(proc, Base.SIGTERM); sleep(5)
+            process_running(proc) && kill(proc, Base.SIGKILL)
+        end
+    end
+    wait(proc); close(watchdog)
+    result = proc
     elapsed = round(time() - t0, digits=1)
+
+    if timed_out[]
+        println("  FAIL  $pad  TIMEOUT after $(FILE_TIMEOUT)s")
+        push!(fail_list, (fname, "TIMEOUT after $(FILE_TIMEOUT)s"))
+        continue
+    end
 
     if result.exitcode == 0
         println("  PASS  $pad  $(elapsed)s")

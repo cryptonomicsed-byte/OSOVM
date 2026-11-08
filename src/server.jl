@@ -8,10 +8,12 @@ module OsoVMServer
 include("opcodes.jl")
 include("oso_compiler.jl")
 include("oso_vm.jl")
+include("../integrations/ucx/resource_meter.jl")   # UcxJobMeter (meter read)
 
 using .Opcodes
 using .OsoCompiler
 using .OsoVM
+using .UcxJobMeter
 
 using HTTP
 using JSON3
@@ -362,6 +364,166 @@ function handle_veilsim_run(req::HTTP.Request)::HTTP.Response
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RESTORED ROUTES (deleted by 8b88bca, 2026-11-04, in a commit titled as a
+# one-line MethodError fix). Vantage calls /v1/tier-sync at startup and
+# /v1/tier-update on every tier change (backend/osovm_client.py); both had
+# returned 404 since. They had also never worked before that: they called
+# parse_json_body, which no version of this file ever defined, so every call
+# threw UndefVarError -> 500. test/server_handlers_test.jl covers all of them.
+#
+# Restored as they were: tier-sync, tier-update, the /v1/vm shim, meter read.
+# Restored FAIL-CLOSED: gpu_contribution, ucx/settle, ucx/preflight and the TOC
+# allowlist. As written they let an authenticated caller self-report
+# gpu_seconds into the Synapse TOC_MINT cycle (and a Dopamine mint via the
+# event bridge) against an anchor that was only checked for being non-empty --
+# a caller-priced mint (I-12/I-13) -- and the allowlist was open when empty.
+# They validate input (400 on bad requests) and then refuse with the reason.
+# No live caller uses any of the four.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Parse a JSON request body; `nothing` when it is not valid JSON."""
+function parse_json_body(req::HTTP.Request)
+    try
+        return JSON3.read(_req_body_bytes(req))
+    catch
+        return nothing
+    end
+end
+
+refused(status::Int, msg::String) = HTTP.Response(status, ["Content-Type" => "application/json"],
+    JSON3.write(Dict{String,Any}("status" => "refused", "error" => msg)))
+
+const _UNVERIFIED_MINT_INPUT = "self-reported gpu_seconds cannot feed a mint: the zangbeto anchor is not " *
+    "verified by any code path (I-12/I-13). Route compute proofs through COMPUTE_PROOF (0x56)."
+
+# Closed by default: an empty list now admits nobody (it used to admit everybody).
+const TOC_ALLOWLIST = Set{String}(filter(!isempty, split(get(ENV, "OSOVM_ALLOWLIST", ""), ",")))
+
+"""POST /api/toc/allowlist/check  Body: { provider_id, gpu_seconds, zangbeto_anchor }"""
+function handle_toc_allowlist_check(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req); b === nothing && return bad_request("invalid JSON body")
+    provider_id = string(get(b, :provider_id, ""))
+    isempty(provider_id) && return bad_request("missing field: provider_id")
+    no(reason) = HTTP.Response(403, ["Content-Type" => "application/json"],
+                               JSON3.write(Dict{String,Any}("eligible" => false, "reason" => reason)))
+    isempty(TOC_ALLOWLIST) && return no("allowlist not configured (OSOVM_ALLOWLIST is empty): closed by default")
+    provider_id in TOC_ALLOWLIST || return no("provider not on TOC allowlist")
+    Float64(get(b, :gpu_seconds, 0.0)) > 0 || return no("gpu_seconds must be > 0")
+    isempty(string(something(get(b, :zangbeto_anchor, nothing), ""))) && return no("missing zangbeto_anchor")
+    return json_ok(Dict{String,Any}("eligible" => true, "reason" => "ok"))
+end
+
+"""POST /api/osovm/gpu_contribution — validates, then refuses (see header)."""
+function handle_gpu_contribution(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req); b === nothing && return bad_request("invalid JSON body")
+    for f in (:provider_id, :submitter_id, :job_id)
+        isempty(string(get(b, f, ""))) && return bad_request("missing field: $f")
+    end
+    Float64(get(b, :gpu_seconds, 0.0)) > 0 || return bad_request("gpu_seconds must be > 0")
+    return refused(501, _UNVERIFIED_MINT_INPUT)
+end
+
+"""POST /v1/vm — logical session id for multi-step callers (rlm-osovm.ts).
+The VM is stateless per request; the id only correlates responses."""
+function handle_v1_vm_create(req::HTTP.Request)::HTTP.Response
+    return json_ok(Dict{String,Any}("vm_id" => "vm:" * string(UUIDs.uuid4()), "status" => "created"))
+end
+
+"""POST /v1/vm/:id/execute — /run on a fresh VM, tagged with vm_id."""
+function handle_v1_vm_execute(req::HTTP.Request, vm_id::String)::HTTP.Response
+    result = handle_run(req)
+    result.status == 200 || return result
+    try
+        merged = Dict{String,Any}(string(k) => v for (k, v) in JSON3.read(String(copy(result.body))))
+        merged["vm_id"] = vm_id
+        return json_ok(merged)
+    catch
+        return result
+    end
+end
+
+"""POST /ucx/preflight — validates, then refuses: the Synapse balance it checks
+was read from a fresh VM, so it was always 0 and every job got a 402. Needs a
+persistent balance store (plan B2)."""
+function handle_ucx_preflight(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req); b === nothing && return bad_request("invalid JSON body")
+    isempty(string(get(b, :agent_id, ""))) && return bad_request("missing field: agent_id")
+    isempty(string(get(b, :job_id, ""))) && return bad_request("missing field: job_id")
+    return refused(501, "preflight needs a persistent Synapse balance; a fresh-per-request VM always reads 0 (plan B2)")
+end
+
+"""POST /ucx/settle — validates, then refuses (see header)."""
+function handle_ucx_settle(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req); b === nothing && return bad_request("invalid JSON body")
+    isempty(string(get(b, :lock_id, ""))) && return bad_request("missing field: lock_id")
+    return refused(501, _UNVERIFIED_MINT_INPUT)
+end
+
+"""GET /ucx/meter/:session_id — read-only."""
+function handle_ucx_meter_read(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    parts = split(req.target, '/')
+    session_id = length(parts) >= 4 ? join(parts[4:end], '/') : ""
+    isempty(session_id) && return bad_request("missing session_id in path")
+    return json_ok(UcxJobMeter.current_reading(session_id))
+end
+
+_tier_or_nothing(t) = (t isa Integer || (t isa AbstractFloat && isinteger(t))) && 0 <= t <= 5 ? Int(t) : nothing
+
+"""POST /v1/tier-sync  Body: [{agent_id, tier}, ...] or {entries: [...]}, max 10_000.
+Replaces the tier registry (stale entries from a previous process are cleared)."""
+function handle_tier_sync(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req)
+    b === nothing && return bad_request("invalid JSON — expected array [{agent_id,tier}]")
+    entries = b isa AbstractVector ? b :
+              (b isa AbstractDict && haskey(b, :entries)) ? b[:entries] :
+              return bad_request("body must be a JSON array or {\"entries\": [...]}")
+    length(entries) > 10_000 && return bad_request("batch too large (max 10,000)")
+    new_reg = Dict{String,Int}(); skipped = 0
+    for item in entries
+        aid = item isa AbstractDict ? get(item, :agent_id, nothing) : nothing
+        t = item isa AbstractDict ? _tier_or_nothing(get(item, :tier, nothing)) : nothing
+        # (was `aid === nothing || isempty(...) && continue`, which registered a
+        # missing agent_id under the key "nothing")
+        if aid === nothing || isempty(string(aid)) || t === nothing
+            skipped += 1; continue
+        end
+        new_reg[string(aid)] = t
+    end
+    lock(OsoVM._TIER_REGISTRY_LOCK) do
+        empty!(OsoVM._TIER_REGISTRY_GLOBAL); merge!(OsoVM._TIER_REGISTRY_GLOBAL, new_reg)
+    end
+    return json_ok(Dict{String,Any}("status" => "ok", "count" => length(new_reg), "skipped" => skipped))
+end
+
+"""POST /v1/tier-update  Body: {agent_id, tier (0-5)}"""
+function handle_tier_update(req::HTTP.Request)::HTTP.Response
+    agent, auth_err = authenticate(req)
+    auth_err !== nothing && return unauthorized(auth_err)
+    b = parse_json_body(req)
+    (b === nothing || !(b isa AbstractDict)) && return bad_request("invalid JSON")
+    aid = get(b, :agent_id, nothing)
+    (aid === nothing || isempty(string(aid))) && return bad_request("agent_id required")
+    haskey(b, :tier) || return bad_request("tier required")
+    t = _tier_or_nothing(b[:tier]); t === nothing && return bad_request("tier must be an integer 0–5")
+    lock(OsoVM._TIER_REGISTRY_LOCK) do
+        OsoVM._TIER_REGISTRY_GLOBAL[string(aid)] = t
+    end
+    return json_ok(Dict{String,Any}("status" => "ok", "agent_id" => string(aid), "tier" => t))
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTER
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -378,6 +540,37 @@ function router(req::HTTP.Request)::HTTP.Response
 
         elseif target == "/veilsim/run" && method == "POST"
             return handle_veilsim_run(req)
+
+        elseif target == "/v1/tier-sync" && method == "POST"
+            return handle_tier_sync(req)
+
+        elseif target == "/v1/tier-update" && method == "POST"
+            return handle_tier_update(req)
+
+        elseif target == "/v1/health" && method == "GET"
+            return handle_health(req)
+
+        elseif target == "/v1/vm" && method == "POST"
+            return handle_v1_vm_create(req)
+
+        elseif startswith(target, "/v1/vm/") && endswith(target, "/execute") && method == "POST"
+            parts = split(target, '/')          # ["", "v1", "vm", "<id>", "execute"]
+            return handle_v1_vm_execute(req, length(parts) >= 5 ? String(parts[4]) : "unknown")
+
+        elseif target == "/ucx/preflight" && method == "POST"
+            return handle_ucx_preflight(req)
+
+        elseif target == "/ucx/settle" && method == "POST"
+            return handle_ucx_settle(req)
+
+        elseif startswith(target, "/ucx/meter/") && method == "GET"
+            return handle_ucx_meter_read(req)
+
+        elseif target == "/api/toc/allowlist/check" && method == "POST"
+            return handle_toc_allowlist_check(req)
+
+        elseif target == "/api/osovm/gpu_contribution" && method == "POST"
+            return handle_gpu_contribution(req)
 
         else
             body = JSON3.write(Dict{String,Any}(
@@ -409,5 +602,12 @@ end
 end # module OsoVMServer
 
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
-port = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : parse(Int, get(ENV, "OSOVM_PORT", "7780"))
-OsoVMServer.start(port=port)
+# Only when run as the program (`julia --project=. src/server.jl 7780`, which is
+# how the osovm unit starts it). Including this file -- the handler tests, or
+# src/server_main.jl -- must not bind a port: it used to, so the tests died with
+# EADDRINUSE next to the live service and server_main.jl's own start() was
+# unreachable behind the blocking serve().
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    port = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : parse(Int, get(ENV, "OSOVM_PORT", "7780"))
+    OsoVMServer.start(port=port)
+end

@@ -8,30 +8,20 @@
     - Integration (composition chains, FFI calls)
 """
 
-# KNOWN RED, TRACKED GAP (2026-08-13): this file was fixed to correctly
-# call the real execute_veil() API (VeilExecutionContext struct, not a
-# Dict -- see src/veil_executor.jl) and correctly detects a real,
-# separate, much bigger gap: load_ffi_implementation() in
-# veil_executor.jl has NO real per-veil implementations anywhere in this
-# repo (confirmed: FFI_REGISTRY is never populated by anything, grepped
-# src/ and ffi/ for real entries -- zero hits). Every one of the 777
-# veils, across every tier sampled (Classical/ML/Signal/Robotics/First
-# Canon/Quantum), falls through to create_stub_implementation() and
-# returns the identical decorative shape
-# {veil_id, status: "success", language, result: "stub_output_for_veil_N"}
-# -- no real PID/Kalman/LQR/FFT/kinematics/quantum-gate math anywhere.
+# HISTORY (2026-08-13 -> 2026-11-08): this file used to be KNOWN RED.
+# FFI_REGISTRY was never populated and every veil fell through to a stub that
+# returned status="success" with "stub_output_for_veil_N". The stub is deleted
+# (a veil with no implementation is now status="error"), and every veil this
+# file asserts on has a real implementation in src/veil_native.jl, checked for
+# correctness (not just shape) in test/veil_native_test.jl. The batch loops
+# below only assert a VeilExecutionContext comes back; for veils with no
+# implementation that context now honestly carries status="error".
 #
-# This is a SEPARATE, much larger gap than the 155-opcode OSOVM VM stub
-# gap (closed 2026-08-12/13) -- that was VM opcode dispatch; this is the
-# 777-veil FFI execution layer, spanning multiple languages
-# (Julia/Rust/Python per the architecture docs). Real work: implement
-# actual math/physics/ML/DSP per veil, wire each into FFI_REGISTRY.
-# Deliberately NOT started here -- scoped, tracked, not attempted
-# unprompted. This file's remaining failures (Classical Systems veils
-# 1-3, and likely most/all of the other 5 tiers once they get a chance
-# to run past the first failing @testset) are the test correctly
-# catching this, not a test bug -- do not weaken these assertions to
-# accept stub output; that would hide the gap instead of surfacing it.
+# Three assertions were malformed, not strict: 403/407 nested an @test inside
+# an `@test begin ... end`, so the outer test received a Test.Pass object
+# instead of a Bool and always errored. Each condition is unchanged, asserted
+# once. Likewise `any(v -> f for v in xs)` built a generator of lambdas, not
+# Bools; rewritten as `any(v -> f, xs)`, same condition. Do not weaken these assertions to accept placeholder output.
 
 include(joinpath(@__DIR__, "..", "src", "veils_777.jl"))
 include(joinpath(@__DIR__, "..", "src", "veil_index.jl"))
@@ -47,7 +37,7 @@ using LinearAlgebra
 import Main.Veils777: VeilDefinition, get_veil, list_veils_by_tier
 import Main.VeilIndex: lookup_veil, search_veils, veil_by_tier
 import Main.VeilExecutor: execute_veil, execute_veil_composition
-import Main.VeilSimScorer: score_veil, veil_f1_score
+import Main.VeilSimScorer: veil_f1_score, score_veil_execution, should_mint_ase, VeilMetrics, F1_THRESHOLD
 import Main.SacredGeometry
 
 export run_all_tests, run_phase_tests
@@ -291,7 +281,7 @@ end
             Dict()
         )
         φ = (result_φ.status == "success" ? result_φ.output["value"] : NaN)
-        @test 1.618 < φ < 1.619  # Golden ratio within tolerance
+        1.618 < φ < 1.619  # Golden ratio within tolerance
     end
     
     @test begin
@@ -300,7 +290,7 @@ end
             Dict()
         )
         π = (result_π.status == "success" ? result_π.output["value"] : NaN)
-        @test 3.141 < π < 3.142  # Pi within tolerance
+        3.141 < π < 3.142  # Pi within tolerance
     end
     
     # Veil 407: Harmonic Frequencies
@@ -310,7 +300,7 @@ end
             Dict()
         )
         schumann = (result.status == "success" ? result.output["hz"] : NaN)
-        @test 7.8 < schumann < 7.9  # Schumann frequency
+        7.8 < schumann < 7.9  # Schumann frequency
     end
     
     # Batch test remaining First Canon veils
@@ -378,32 +368,27 @@ end
 # ============================================================================
 
 @testset "F1 Scoring Validation" begin
-    
-    # Test that veil scoring returns expected ranges
-    @test begin
-        f1_score = score_veil(1, 0.95)  # Veil 1, F1=0.95
-        0.0 <= f1_score <= 10.0  # Valid Àṣẹ range
-    end
-    
-    @test begin
-        # High F1 should trigger rewards
-        f1_high = veil_f1_score(0.95, 1)
-        f1_high >= 5.0  # Minimum reward threshold
-    end
-    
-    @test begin
-        # Low F1 should not trigger rewards
-        f1_low = veil_f1_score(0.80, 1)
-        f1_low == 0.0  # No reward below threshold
-    end
-    
-    # Test composite scoring
-    @test begin
-        veils = [1, 2, 3, 4, 5]
-        f1_scores = [0.94, 0.91, 0.92, 0.90, 0.93]
-        total_score = sum(veil_f1_score(f1, veil_id) for (veil_id, f1) in zip(veils, f1_scores))
-        total_score >= 0.0  # Valid total
-    end
+    # The scorer measures; it never pays. These assertions replaced ones that
+    # called score_veil(id, f1) / veil_f1_score(f1, id) and expected an Àṣẹ
+    # amount back from a CALLER-SUPPLIED F1 -- a caller-priced mint (I-12/I-13).
+    # That API was deliberately removed: Àṣẹ issuance routes through the
+    # emission clock only (I-33), and a passing score feeds COMPUTE_PROOF ->
+    # Synapse. What is asserted now is that contract.
+    m(tp, fp, fn, tn) = VeilMetrics(1, tp, fp, fn, tn, 0.01, 0, 0.0)
+
+    # F1 is computed from measured counts, not accepted from the caller
+    @test veil_f1_score(m(9, 1, 1, 89)) ≈ 0.9
+    @test veil_f1_score(m(0, 0, 0, 100)) == 0.0
+
+    # a perfect score still mints no Àṣẹ
+    rec = score_veil_execution(1, m(100, 0, 0, 0), "did:key:scorer")
+    @test rec.f1_score == 1.0 && rec.ase_minted == 0.0
+
+    # the threshold only gates eligibility for the proof path
+    @test should_mint_ase(1.0) && !should_mint_ase(F1_THRESHOLD - 1e-9)
+
+    # an unknown veil scores nothing
+    @test score_veil_execution(99_999, m(10, 0, 0, 0)).f1_score == 0.0
 end
 
 # ============================================================================
@@ -471,19 +456,19 @@ end
     # Test search functionality
     @test begin
         results = search_veils("gradient")
-        length(results) > 0 && any(v -> v.id == 26 for v in results)
+        length(results) > 0 && any(v -> v.id == 26, results)
     end
     
     # Test tier-based filtering
     @test begin
         classical_veils = veil_by_tier("classical")
-        all(v -> 1 <= v.id <= 25 for v in classical_veils)
+        all(v -> 1 <= v.id <= 25, classical_veils)
     end
     
     # Test tier ranges
     @test begin
         quantum_veils = veil_by_tier("quantum")
-        all(v -> 501 <= v.id <= 550 for v in quantum_veils)
+        all(v -> 501 <= v.id <= 550, quantum_veils)
     end
 end
 

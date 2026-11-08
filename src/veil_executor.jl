@@ -10,10 +10,12 @@ module VeilExecutor
 include("veils_777.jl")
 include("veil_index.jl")
 include("opcodes_veil.jl")
+include("veil_native.jl")
 
 using .Veils777
 using .VeilIndex
 using .OpcodeVeil
+using .VeilNative
 
 export execute_veil, execute_veil_composition, execute_veil_conditional,
        load_ffi_implementation, veil_execution_context
@@ -86,46 +88,16 @@ function load_ffi_implementation(language::String, veil_id::Int)::Union{Function
         return FFI_REGISTRY[(language, veil_id)]
     end
     
-    # Try to load from file
-    veil = lookup_veil(veil_id)
-    if isnothing(veil)
-        return nothing
-    end
-    
-    # Create a stub implementation that returns synthetic results
-    return create_stub_implementation(veil_id, language)
+    isnothing(lookup_veil(veil_id)) && return nothing
+    # Native Julia implementation (src/veil_native.jl). Used whatever backend the
+    # catalog names, because no Rust/Python veil backend exists; the output is
+    # tagged so callers can see which ran.
+    return get(VeilNative.NATIVE_VEILS, veil_id, nothing)
 end
 
-"""
-Create a stub implementation for testing/validation.
-"""
-function create_stub_implementation(veil_id::Int, language::String)::Function
-    function stub_impl(parameters::Dict, input_data::Dict)::Dict
-        # Return synthetic output based on veil type
-        veil = lookup_veil(veil_id)
-        
-        # Basic stub outputs
-        output = Dict(
-            "veil_id" => veil_id,
-            "status" => "success",
-            "language" => language,
-            "result" => "stub_output_for_veil_$veil_id"
-        )
-        
-        # Add parameter echo
-        if !isempty(parameters)
-            output["parameters_received"] = parameters
-        end
-        
-        if !isempty(input_data)
-            output["input_received"] = input_data
-        end
-        
-        return output
-    end
-    
-    return stub_impl
-end
+# There is deliberately no stub. A veil with no implementation is an error
+# ("No implementation available ..."), never status="success" with placeholder
+# output -- the old stub did exactly that for all 777 veils.
 
 # ============================================================================
 # VEIL EXECUTION
@@ -165,8 +137,13 @@ function execute_veil(veil_id::Int, parameters::Dict = Dict(),
         end
         
         # Execute implementation
-        result = impl(parameters, input_data)
-        
+        result = impl(context.parameters, context.input_data)
+        result isa AbstractDict || error("veil $veil_id implementation returned $(typeof(result)), not a Dict")
+        result = Dict{String,Any}(result)
+        if !haskey(FFI_REGISTRY, (context.ffi_language, veil_id))
+            result["implementation"] = "julia-native"
+            result["catalog_backend"] = context.ffi_language
+        end
         context.output = result
         context.status = "success"
         context.execution_time = time() - start_time
@@ -175,7 +152,7 @@ function execute_veil(veil_id::Int, parameters::Dict = Dict(),
         
     catch err
         context.status = "error"
-        context.error_message = string(err)
+        context.error_message = err isa ArgumentError ? err.msg : sprint(showerror, err)
         context.execution_time = time() - start_time
         return context
     end
@@ -187,8 +164,14 @@ end
 
 Execute a pipeline of veils, passing output of one as input to next.
 """
-function execute_veil_composition(veil_sequence::Vector{Int}, 
-                                 initial_input::Dict = Dict())::Dict
+execute_veil_composition(veil_sequence::Vector{Int}, initial_input::Dict = Dict())::Dict =
+    execute_veil_composition(veil_sequence, Dict{String,Any}(), initial_input)
+
+# `parameters` configure the FIRST veil only; every later veil gets the previous
+# veil's output as its input and its own defaults (parameters are per-veil, and
+# reusing PID gains as Kalman noise would be meaningless).
+function execute_veil_composition(veil_sequence::Vector{Int}, parameters::Dict,
+                                  initial_input::Dict)::Dict
     
     if isempty(veil_sequence)
         return Dict("error" => "Empty veil sequence")
@@ -216,7 +199,7 @@ function execute_veil_composition(veil_sequence::Vector{Int},
     
     for (idx, veil_id) in enumerate(veil_sequence)
         # Execute veil with previous output as input
-        context = execute_veil(veil_id, Dict(), current_output)
+        context = execute_veil(veil_id, idx == 1 ? parameters : Dict(), current_output)
         push!(composition_result["steps"], context)
         
         # Check for error
