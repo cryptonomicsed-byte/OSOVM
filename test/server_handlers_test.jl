@@ -134,6 +134,19 @@ end
             """{"provider_id":"p","gpu_seconds":5,"zangbeto_anchor":"a"}""")).status == 403   # closed by default
     end
 
+    @testset "veilsim measurements are measured or absent, never fabricated (I-44)" begin
+        r = handle_veilsim_run(_req("POST", "/veilsim/run", """{"veil_ids":[1]}"""))
+        @test r.status == 200
+        b = JSON3.read(String(r.body))
+        for k in ("f1_score", "energy_drift", "robustness")
+            # either the VEIL produced it, or it is listed as unmeasured and absent
+            @test haskey(b, k) ⊻ (k in b["unmeasured"])
+            @test haskey(b, k) == haskey(b["receipt"], k)
+        end
+        # the 8b88bca literals must never come back as "measurements"
+        @test !(get(b, "robustness", nothing) === 0.95 && "robustness" in b["unmeasured"])
+    end
+
     @testset "handle_tier_sync — empty array returns count 0" begin
         r = handle_tier_sync(_req("POST", "/v1/tier-sync", "[]"))
         @test r.status == 200

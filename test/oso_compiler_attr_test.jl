@@ -1,4 +1,4 @@
-include("/opt/ares/OSOVM/src/oso_compiler.jl")
+include(joinpath(@__DIR__, "..", "src", "oso_compiler.jl"))
 using .OsoCompiler
 using Test
 

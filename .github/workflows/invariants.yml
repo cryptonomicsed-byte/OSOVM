@@ -32,9 +32,18 @@ on:
     paths:
       - 'src/**'
       - '.github/workflows/invariants.yml'
+      - 'test/**'
+      - 'integrations/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
   pull_request:
     paths:
       - 'src/**'
+      - 'test/**'
+      - 'integrations/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
+      - '.github/workflows/invariants.yml'
   workflow_dispatch:
 
 jobs:

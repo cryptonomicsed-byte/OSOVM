@@ -1,4 +1,4 @@
-include("/opt/ares/OSOVM/src/techgnos_compiler.jl")
+include(joinpath(@__DIR__, "..", "src", "techgnos_compiler.jl"))
 using .TechGnosCompiler
 using Test
 
