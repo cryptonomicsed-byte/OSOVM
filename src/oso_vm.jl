@@ -2100,6 +2100,10 @@ function handle_glyphindex(vm::VMState, opcode::UInt8, args)::Any
 end
 
 
+# Set only by a runtime whose VMState persists across requests. Nothing sets it
+# today: every /run is a fresh VM, so one-time events (genesis) fail closed.
+const _GENESIS_PERSISTENT_STATE = Ref(false)
+
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
     if vm.halted
@@ -2234,6 +2238,18 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # block 0. Genesis-used state is tracked via vm.events (this
         # VMState has no metadata dict) rather than adding a new struct
         # field, which would require updating every create_vm() call site.
+        #
+        # FAIL CLOSED (I-13). The "once" guard below reads per-VM state, and
+        # server.jl builds a fresh VM for every /run: block_height is always 0
+        # and vm.events is always empty, so the guard was true on every request
+        # and each call minted 1.0 Àṣẹ (measured: three requests, three mints).
+        # Genesis is a one-time constitutional event. It cannot be enforced
+        # until the VM has state that survives between requests (plan B2), so
+        # until then this opcode refuses. test/genesis_once_test.jl
+        if !_GENESIS_PERSISTENT_STATE[]
+            return Dict("success" => false, "genesis" => false,
+                        "error" => "genesis requires persistent VM state; a fresh-per-request VM cannot enforce a one-time mint")
+        end
         token = get(args, :token, "ASHE")
         already_used = any(e -> get(e, :name, "") == "GenesisFlawUsed", vm.events)
         if vm.block_height == 0 && token == "ASHE" && !already_used
