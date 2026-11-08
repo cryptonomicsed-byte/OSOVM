@@ -14,6 +14,7 @@ ENV["OSOVM_API_KEY"] = "test_key"
 
 using Test
 using HTTP
+using JSON3
 
 include(joinpath(@__DIR__, "..", "src", "server.jl"))
 # Module name is OsoVMServer (the file ends with `end # module OsoVMServer`).
@@ -117,6 +118,20 @@ end
         @test r.status == 200
         body = JSON3.read(String(r.body))
         @test body["count"] == 2
+    end
+
+    @testset "handle_tier_sync — entry without agent_id is skipped, not stored as \"nothing\"" begin
+        r = handle_tier_sync(_req("POST", "/v1/tier-sync", """[{"tier":2},{"agent_id":"ok","tier":1}]"""))
+        @test r.status == 200 && JSON3.read(String(r.body))["count"] == 1
+        @test !haskey(Main.OsoVMServer.OsoVM._TIER_REGISTRY_GLOBAL, "nothing")
+    end
+
+    @testset "mint-feeding routes refuse after validating" begin
+        good = """{"provider_id":"p","submitter_id":"s","job_id":"j","gpu_seconds":10}"""
+        @test handle_gpu_contribution(_req("POST", "/api/osovm/gpu_contribution", good)).status == 501
+        @test handle_ucx_settle(_req("POST", "/ucx/settle", """{"lock_id":"l"}""")).status == 501
+        @test handle_toc_allowlist_check(_req("POST", "/api/toc/allowlist/check",
+            """{"provider_id":"p","gpu_seconds":5,"zangbeto_anchor":"a"}""")).status == 403   # closed by default
     end
 
     @testset "handle_tier_sync — empty array returns count 0" begin
