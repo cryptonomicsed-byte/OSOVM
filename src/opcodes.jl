@@ -212,7 +212,17 @@ const EXPANSION_OPCODES = Dict{Symbol, UInt8}(
     :RESTORE        => 0xe6,  # @restore - Data recovery
     :MIGRATE        => 0xe7,  # @migrate - Data movement
     :ROLLBACK       => 0xe8,  # @rollback - Undo transaction
-    :CHECKPOINT     => 0xe9   # @checkpoint - Save state
+    :CHECKPOINT     => 0xe9,  # @checkpoint - Save state
+
+    # GlyphIndex memory syscalls (5). Semantics live in glyphindex.jl
+    # (GlyphIndex.GLYPH_OPCODES); they are declared here too so the canonical
+    # table matches what the VM dispatches. oso_vm.jl asserts at load that the
+    # two tables agree byte-for-byte.
+    :GLYPH_STORE    => 0xf0,  # @glyphStore  - journal a sealed chunk
+    :GLYPH_EXPAND   => 0xf1,  # @glyphExpand - serve sealed blob + metadata
+    :GLYPH_SEARCH   => 0xf2,  # @glyphSearch - semantic top-k over the vault
+    :GLYPH_ANCHOR   => 0xf3,  # @glyphAnchor - emit merkle root for Sui anchoring
+    :GLYPH_AUDIT    => 0xf4   # @glyphAudit  - Zangbeto receipt/envelope audit
 )
 
 # Combined opcode map

@@ -23,6 +23,15 @@ include("token_guards.jl")
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
+
+# The canonical table (opcodes.jl) and GlyphIndex's own table must agree on
+# every GLYPH_* byte. They used to be separate, so 0xf0-0xf4 were dispatched
+# here while the canonical table had never heard of them.
+for (name, byte) in GlyphIndex.GLYPH_OPCODES
+    get(Opcodes.OPCODE_MAP, name, nothing) == byte || error(
+        "opcode table drift: GlyphIndex declares $name => 0x$(string(byte, base=16)) " *
+        "but opcodes.jl has $(get(Opcodes.OPCODE_MAP, name, "nothing"))")
+end
 using .Seven
 using .WorldTiles
 using .ProofEngine

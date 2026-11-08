@@ -1,0 +1,60 @@
+name: opcode-spec
+
+# OPCODE_SPEC.toml is the contract between Techgnosis and the VM. It is
+# generated from src/oso_vm.jl by EXECUTING every byte (tools/opcode_probe.jl),
+# never hand-edited. This job fails when:
+#   - the committed TOML no longer matches what the VM does   (spec-stale)
+#   - the VM rejects a byte its own table declares            (removed-but-declared)
+#   - the VM runs a byte its table has no name for            (dispatched-undeclared)
+#   - one name resolves to two bytes                          (name-on-two-bytes)
+# The exit code is the failure count; the target is 0.
+#
+# Declared-but-unimplemented opcodes (e.g. the contract lifecycle CREATE/CALL/
+# DELEGATE/SELFDESTRUCT) are printed but not counted: they are gaps, not drift.
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'OPCODE_SPEC.toml'
+      - '.github/workflows/opcode-spec.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'OPCODE_SPEC.toml'
+  workflow_dispatch:
+
+jobs:
+  opcode-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - name: Instantiate Julia project
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Opcode spec gate
+        run: |
+          set -o pipefail
+          python3 tools/opcode_spec.py check --julia julia | tee spec.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "### Opcode spec"
+            echo '```'
+            tail -n 40 spec.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::opcode spec gate: $status failure(s). If the VM change is intended, run 'tools/opcode_spec.py generate' and commit OPCODE_SPEC.toml."
+          fi
+          exit "$status"
