@@ -106,7 +106,7 @@ const TOC = load_toc_constants()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NAMED CONSTANTS (typed, for use without Dict lookup)
-# Reference these in vm_core.jl instead of hardcoded literals.
+# Reference these in vm_core.UNWIRED.jl instead of hardcoded literals.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # [ase]

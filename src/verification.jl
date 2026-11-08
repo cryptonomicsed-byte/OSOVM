@@ -3,9 +3,9 @@
 # is_fully_verified() is the canonical gate for TOC_MINT (0x54).
 # Two call signatures are provided:
 #
-#   1. vm_core path (VMState from vm_core.jl):
+#   1. vm_core path (VMState from vm_core.UNWIRED.jl):
 #      toc_is_fully_verified(state, agent_id, claimed_gpu_seconds)
-#      → delegates to VMCore.toc_is_fully_verified (defined in vm_core.jl)
+#      → delegates to VMCore.toc_is_fully_verified (defined in vm_core.UNWIRED.jl)
 #
 #   2. Agent-state path (Dict-based agent records):
 #      is_fully_verified(agent_state)

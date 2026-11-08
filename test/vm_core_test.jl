@@ -2,7 +2,7 @@
 # vm_core_test.jl — Deterministic VM Core Tests
 # Verifies: determinism, rounding, genesis flaw, halt, stake/unstake conservation
 
-include("../src/vm_core.jl")
+include("../src/vm_core.UNWIRED.jl")  # not the serving path; see its header
 using .VMCore
 using Test
 

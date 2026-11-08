@@ -1,3 +1,35 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  UNWIRED — NOT IN THE SERVING PATH. DO NOT READ THIS AS THE OPCODE TABLE.  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# The live VM is src/oso_vm.jl. server.jl's /run calls OsoVM.execute_instruction
+# and nothing in src/ includes this file; its only includer is
+# test/vm_core_test.jl. Measured by executing every byte through the live path
+# (tools/opcode_probe.jl, 2026-11-08): all 27 bytes in OPCODE_HANDLERS below are
+# dispatched by oso_vm.jl -- but 11 of them mean something different there:
+#
+#   byte  here (unwired)       live (oso_vm.jl)
+#   0x40  PROPOSAL_CREATE      PROPOSAL
+#   0x41  COUNCIL_VOTE         VOTE
+#   0x43  TIER_CHECK           QUORUM
+#   0x50  REPUTATION_UPDATE    VERDICT
+#   0x71  AGENT_SLEEP          VIGIL
+#   0x78  AGENT_WAKE           RENEWAL
+#   0xb8  AGENT_FORK           TWIN
+#   0xc1  ASE_BURN             ORDER
+#   0xc2  SYNAPSE_ALLOC        LIQUIDITY
+#   0xc4  DOPAMINE_CHECK       YIELD
+#   0xc5  STAKING_LOCK         BOND
+#
+# Those 11 behaviours exist ONLY here. They were not moved into the live VM by
+# this rename, because each needs a byte allocated in the spec (their bytes are
+# taken) -- that is a specification decision, not a refactor. Until one is made,
+# they are reachable from the test suite only.
+#
+# The canonical table is generated from the live VM: tools/opcode_spec.py
+# generate -> OPCODE_SPEC.toml. If you are looking for "what byte means what",
+# read that, never this.
+
 # vm_core.jl — Ọ̀ṢỌ́VM TEST HARNESS VM
 #
 # STATUS: test harness only. No production code includes this module.
