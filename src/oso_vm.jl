@@ -2101,7 +2101,14 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
     # Deleted opcodes: reject before is_critical() so they cannot fall through
     # to call_ase_vault() and return a fabricated success receipt.
-    if opcode == 0x11 || opcode == 0xc0
+    #
+    # Only 0x11 (IMPACT, a caller-priced ASE mint) is deleted in THIS VM. 0xc0
+    # used to be listed here too, but the deleted 0xc0 was vm_core's ASE_MINT;
+    # in this table 0xc0 is MARKET, which registers a venue and mints nothing.
+    # Blocking it made the whole 0xc0-0xc3 cluster unreachable, since ORDER,
+    # LIQUIDITY and SWAP all require an existing market.
+    # (test/market_cluster_test.jl)
+    if opcode == 0x11
         return Dict("success" => false,
                     "error"   => "opcode 0x$(string(opcode, base=16)) has been removed; no replacement",
                     "opcode"  => "0x$(string(opcode, base=16))")
