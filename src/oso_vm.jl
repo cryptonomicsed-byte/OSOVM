@@ -23,6 +23,15 @@ include("token_guards.jl")
 using .Opcodes
 using .OsoCompiler
 using .GlyphIndex
+
+# The canonical table (opcodes.jl) and GlyphIndex's own table must agree on
+# every GLYPH_* byte. They used to be separate, so 0xf0-0xf4 were dispatched
+# here while the canonical table had never heard of them.
+for (name, byte) in GlyphIndex.GLYPH_OPCODES
+    get(Opcodes.OPCODE_MAP, name, nothing) == byte || error(
+        "opcode table drift: GlyphIndex declares $name => 0x$(string(byte, base=16)) " *
+        "but opcodes.jl has $(get(Opcodes.OPCODE_MAP, name, "nothing"))")
+end
 using .Seven
 using .WorldTiles
 using .ProofEngine
@@ -2091,6 +2100,10 @@ function handle_glyphindex(vm::VMState, opcode::UInt8, args)::Any
 end
 
 
+# Set only by a runtime whose VMState persists across requests. Nothing sets it
+# today: every /run is a fresh VM, so one-time events (genesis) fail closed.
+const _GENESIS_PERSISTENT_STATE = Ref(false)
+
 function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
     start_time = time()
     if vm.halted
@@ -2101,7 +2114,14 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
 
     # Deleted opcodes: reject before is_critical() so they cannot fall through
     # to call_ase_vault() and return a fabricated success receipt.
-    if opcode == 0x11 || opcode == 0xc0
+    #
+    # Only 0x11 (IMPACT, a caller-priced ASE mint) is deleted in THIS VM. 0xc0
+    # used to be listed here too, but the deleted 0xc0 was vm_core's ASE_MINT;
+    # in this table 0xc0 is MARKET, which registers a venue and mints nothing.
+    # Blocking it made the whole 0xc0-0xc3 cluster unreachable, since ORDER,
+    # LIQUIDITY and SWAP all require an existing market.
+    # (test/market_cluster_test.jl)
+    if opcode == 0x11
         return Dict("success" => false,
                     "error"   => "opcode 0x$(string(opcode, base=16)) has been removed; no replacement",
                     "opcode"  => "0x$(string(opcode, base=16))")
@@ -2218,6 +2238,18 @@ function execute_instruction(vm::VMState, instr::OsoCompiler.Instruction)::Any
         # block 0. Genesis-used state is tracked via vm.events (this
         # VMState has no metadata dict) rather than adding a new struct
         # field, which would require updating every create_vm() call site.
+        #
+        # FAIL CLOSED (I-13). The "once" guard below reads per-VM state, and
+        # server.jl builds a fresh VM for every /run: block_height is always 0
+        # and vm.events is always empty, so the guard was true on every request
+        # and each call minted 1.0 Àṣẹ (measured: three requests, three mints).
+        # Genesis is a one-time constitutional event. It cannot be enforced
+        # until the VM has state that survives between requests (plan B2), so
+        # until then this opcode refuses. test/genesis_once_test.jl
+        if !_GENESIS_PERSISTENT_STATE[]
+            return Dict("success" => false, "genesis" => false,
+                        "error" => "genesis requires persistent VM state; a fresh-per-request VM cannot enforce a one-time mint")
+        end
         token = get(args, :token, "ASHE")
         already_used = any(e -> get(e, :name, "") == "GenesisFlawUsed", vm.events)
         if vm.block_height == 0 && token == "ASHE" && !already_used

@@ -37,3 +37,4 @@ blockchain/consensus/target/
 
 # Agent scratch
 .claude/
+build/
