@@ -66,12 +66,12 @@ items:
   depends_on: "none"
 
 - id: I-2
-  status: STUB
-  blocker: principal registry not wired (no human vs. agent flag source)
+  status: DONE
   repo: OSOVM
   file: src/token_guards.jl
   symbol: ase_to_synapse
-  work: "apply scarcity curve from TOC_CONSTANTS [synapse].saturation_count; current implementation is linear-only"
+  work: "scarcity curve applied: exact integral of an exponentially decaying marginal rate over TOC_CONSTANTS[:synapse][:saturation_count], bounded by synapse_supply_cap(), additive, pure. Pinned by test/token_guards_i2_test.jl (22 tests)."
+  note: "The old blocker line (principal registry) belonged to I-3/I-4/I-8, not to the curve -- the curve needs no registry, which is why it could land first."
   depends_on: "none"
 
 - id: I-3
