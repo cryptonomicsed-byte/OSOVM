@@ -12,7 +12,8 @@
 
 module TokenGuards
 
-export ase_transfer_guard, is_agent, ase_to_synapse, SYNAPSE_PER_ASE, agent_only
+export ase_transfer_guard, is_agent, ase_to_synapse, SYNAPSE_PER_ASE, agent_only,
+       TOC_CONSTANTS, synapse_supply_cap
 
 # ────────────────────────────────────────────────────────────────────────────
 # I-2  ASE ↔ SYNAPSE conversion gate (the only authorized on-ramp)
@@ -31,17 +32,87 @@ Governance may adjust via proposal; changes take effect at the next
 const SYNAPSE_PER_ASE = 1_000
 
 """
-    ase_to_synapse(ase_amount::Float64) -> Float64
+    TOC_CONSTANTS
 
-Convert ASE to SYNAPSE at the governance-declared base rate.
+Governance-declared tokenomics constants. Read by the conversion gate and by
+anything that needs to price compute. Kept as one dict so a governance
+proposal has a single place to change and auditors have a single place to
+read — the alternative, constants scattered through the module, is how a
+"10x" typo in one file silently becomes a different economy.
+
+:synapse
+    per_gpu_hour    SYNAPSE earned per GPU-hour of delivered compute
+    base_cost_ase   ASE price of one GPU-hour at the base rate
+    saturation_count  ASE scale of the scarcity curve (see ase_to_synapse):
+                    the marginal rate decays by 1/e for every
+                    `saturation_count` ASE already converted
+"""
+const TOC_CONSTANTS = Dict(
+    :synapse => Dict(
+        :per_gpu_hour     => 1_000.0,
+        :base_cost_ase    => 1.0,
+        :saturation_count => 1_000_000.0,
+    ),
+)
+
+"""
+    synapse_supply_cap() -> Float64
+
+The asymptote of the scarcity curve: the most SYNAPSE a curve with the
+current `saturation_count` can ever issue. Finite by construction — the
+point of the curve is that compute credit cannot be printed without bound.
+"""
+function synapse_supply_cap()::Float64
+    s = TOC_CONSTANTS[:synapse]
+    return Float64(SYNAPSE_PER_ASE) * Float64(s[:saturation_count])
+end
+
+"""
+    ase_to_synapse(ase_amount::Float64; already_converted::Float64=0.0) -> Float64
+
+Convert ASE to SYNAPSE at the governance-declared base rate, under the
+scarcity curve from `TOC_CONSTANTS[:synapse][:saturation_count]`.
+
 This is the ONLY authorized on-ramp from human-facing currency to
 agent-facing compute credit.
 
-STATUS: STUB — scarcity curve (TOC: saturation_count) not yet applied.
+The curve is the exact integral of a marginal rate that decays exponentially
+in cumulative ASE already converted::
+
+    rate(a)   = SYNAPSE_PER_ASE * exp(-a / S)
+    synapse   = ∫₀ˣ rate(a₀ + t) dt
+              = SYNAPSE_PER_ASE * S * (exp(-a₀/S) - exp(-(a₀+x)/S))
+
+Properties, each of which a test pins down:
+
+* **Base price preserved.** For small `x` against a large `S` the rate is
+  still ~`SYNAPSE_PER_ASE` per ASE — early buyers are not penalised for
+  being early.
+* **Monotone and concave.** More ASE always buys more SYNAPSE, never less,
+  and each further ASE buys less than the one before.
+* **Bounded.** As `x → ∞` the total approaches `synapse_supply_cap()`.
+* **Additive.** Converting `a` then `b` equals converting `a+b` in one
+  call, so splitting a payment across transactions cannot buy more credit
+  than paying once.
+* **Pure.** No global ledger: the caller passes`already_converted`, which
+  keeps this function testable and keeps the accounting where the ledger is.
+
+Negative amounts throw: a negative conversion is a burn dressed as a
+purchase, and it belongs in an explicit burn path, not here.
 """
-function ase_to_synapse(ase_amount::Float64)::Float64
-    return ase_amount * Float64(SYNAPSE_PER_ASE)
+function ase_to_synapse(ase_amount::Float64; already_converted::Float64=0.0)::Float64
+    ase_amount >= 0 || throw(DomainError(ase_amount, "ase_amount must be >= 0"))
+    already_converted >= 0 || throw(DomainError(already_converted, "already_converted must be >= 0"))
+
+    rate = Float64(SYNAPSE_PER_ASE)
+    S = Float64(TOC_CONSTANTS[:synapse][:saturation_count])
+    # S <= 0 would make the exponent blow up; treat a misconfigured curve as
+    # "no scarcity" rather than as free money.
+    S > 0 || return ase_amount * rate
+
+    return rate * S * (exp(-already_converted / S) - exp(-(already_converted + ase_amount) / S))
 end
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # I-3  ASE transfer guard — human principals only
